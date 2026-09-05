@@ -1,0 +1,7 @@
+File count results for ../command-line
+TXT files:
+7
+SH files:
+1
+C files:
+0
