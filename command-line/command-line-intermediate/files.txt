@@ -1,0 +1,5 @@
+total 0
+-rw-rw-rw- 1 codespace codespace 0 Sep  5 03:00 files.txt
+-rw------- 1 codespace codespace 0 Sep  5 02:59 secret.txt
+
+a
