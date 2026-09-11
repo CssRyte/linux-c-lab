@@ -1,0 +1,67 @@
+1. What is the value of argv?
+    Answer: 0x7fffffffcfa8
+2. What is pointed to by argv / argv[0]?
+    Answer: argv points to an array of command-line argument strings.
+            argv[0] points to the executable path:
+            "/workspaces/linux-c-lab/Module1_lab4/hw0/map"
+3. What is the address of the function main?
+    Answer: 0x555555555169
+4. Run info stack and explain what you see.
+    Answer: The stack shows the active function calls in the program. Frame #0 is
+            recur(i=3) at line 5 of recurse.c, which is the most recent function call.
+            Frame #1 is main() at line 22 of map.c, which called recur(3).
+
+    GDB output:
+            #0  recur (i=3) at recurse.c:5
+            #1  0x00005555555551a9 in main (argc=1, argv=0x7fffffffcfa8) at map.c:22
+5. Try info frame. Explain what you see.
+
+    Answer:
+        The current stack frame is frame #1, which is main(). GDB shows the
+        address of the frame, the current instruction pointer (rip), the source
+        file and line number, the arguments passed to main, the location of local
+        variables, and the saved registers needed to return to the previous frame.
+
+    The instruction pointer rip is currently at:
+    0x5555555551a9 in main at map.c:22
+
+    The arguments are:
+        argc = 1
+        argv = 0x7fffffffcfa8
+
+    GDB also shows where rbp and rip are saved on the stack.
+
+    GDB output:
+        Stack level 1, frame at 0x7fffffffce90:
+        rip = 0x5555555551a9 in main (map.c:22); saved rip = 0x7ffff7dce1ca
+        caller of frame at 0x7fffffffce50
+        source language c.
+        Arglist at 0x7fffffffce80, args: argc=1, argv=0x7fffffffcfa8
+        Locals at 0x7fffffffce80, Previous frame's sp is 0x7fffffffce90
+        Saved registers:
+        rbp at 0x7fffffffce80, rip at 0x7fffffffce88
+6. Run info registers and identify registers holding recognizable parts of the program
+
+    Answer:
+    Several registers contain values that can be connected to the program:
+
+    - rbx = 0x7fffffffcfa8
+    This is the same address as argv, so rbx is holding the argv pointer.
+
+    - rdi = 0x3
+    rdi contains 3. On x86-64 Linux, rdi is used for the first function
+    argument, which matches the call recur(3).
+
+    - rsi = 0x64
+    0x64 is 100 in decimal, which matches the 100-byte size used by
+    malloc(100) in map.c.
+
+    - rip = 0x5555555551a9 <main+64>
+    rip is the instruction pointer and shows the location in main where
+    execution will continue.
+
+    - rbp = 0x7fffffffce80
+    rbp is the base/frame pointer for the current stack frame.
+
+    - rsp = 0x7fffffffce50
+    rsp is the current stack pointer.

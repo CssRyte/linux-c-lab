@@ -1,0 +1,51 @@
+1. What file format is used for this binary? And what architecture is it compiled for?
+
+    The binary uses the ELF 64-bit x86-64 format.
+
+    File format: elf64-x86-64
+    Architecture: i386:x86-64
+
+
+2. What are some of the names of segment/sections you find?
+
+    Some sections in the executable are:
+
+    .text
+    .data
+    .bss
+    .rodata
+    .plt
+    .got
+    .init
+    .fini
+    .dynamic
+
+
+3. What segment/section contains main (the function), and what is the address of main?
+
+
+    main is located in the .text section.
+
+    The address reported by objdump is:
+    0x1169
+
+    Note:
+    GDB reported the runtime address of main as 0x555555555169,
+    while objdump reports 0x1169. The difference occurs because the
+    executable is position-independent and Linux relocates it when the
+    program is loaded into memory.
+
+
+4. Do you see the stack segment anywhere? What about the heap? Explain.
+
+    There is a STACK entry in the program headers, but there is no normal
+    .stack section containing the runtime stack data. The STACK program
+    header describes properties of the stack rather than storing the
+    actual stack contents.
+
+    The heap does not appear as a section in the executable. The heap is
+    created and managed at runtime, such as when malloc() dynamically
+    allocates memory.
+
+    Therefore, the actual stack and heap contents are runtime memory
+    regions rather than normal executable sections.
