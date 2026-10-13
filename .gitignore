@@ -1,0 +1,25 @@
+
+# Generated executables
+/Mod2Assign1/dup2_warmup
+/Mod2Assign1/lseek_example
+/Mod2Assign1/redirect_ls
+/Mod2Assign1/signals
+
+/Mod2Lab3_ClientServerFork/client
+/Mod2Lab3_ClientServerFork/client_cpp
+/Mod2Lab3_ClientServerFork/server
+/Mod2Lab3_ClientServerFork/server_cpp
+
+/Module3Lab_ClientServerUsingFork/client
+/Module3Lab_ClientServerUsingFork/client_cpp
+/Module3Lab_ClientServerUsingFork/dos_sim_local
+/Module3Lab_ClientServerUsingFork/large_client
+/Module3Lab_ClientServerUsingFork/server
+/Module3Lab_ClientServerUsingFork/server_cpp
+/Module3Lab_ClientServerUsingFork/shutdown_client
+
+/server
+
+# Generated output files
+/Mod2Assign1/ls_output.txt
+/Mod2Assign1/output_file.txt
