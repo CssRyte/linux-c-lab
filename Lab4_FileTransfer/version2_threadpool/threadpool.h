@@ -8,15 +8,17 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
+#include <cstddef>
 
 class ThreadPool {
 public:
-    explicit ThreadPool(size_t threads);
+    explicit ThreadPool(size_t threads,
+                        size_t max_connections = 8);
     ~ThreadPool();
 
-    void enqueue(int client_socket);
+    // Returns false when the connection limit is reached.
+    bool enqueue(int client_socket);
 
 private:
     void worker();
@@ -27,20 +29,17 @@ private:
 
     std::mutex queue_mutex;
     std::condition_variable condition;
-
-    // Protect metrics output.
     std::mutex metrics_mutex;
 
-    // Number of workers currently handling clients.
-    std::atomic<size_t> active_workers{0};
+    const size_t max_connections;
 
-    // Completed client requests.
-    std::atomic<uint64_t> completed_tasks{0};
-
-    // Total time spent servicing client requests.
-    std::atomic<uint64_t> total_service_time_us{0};
-
+    // Protected by queue_mutex.
+    size_t outstanding_connections = 0;
     bool stop = false;
+
+    std::atomic<size_t> active_workers{0};
+    std::atomic<uint64_t> completed_tasks{0};
+    std::atomic<uint64_t> total_service_time_us{0};
 };
 
 #endif

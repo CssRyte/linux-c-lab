@@ -6,10 +6,13 @@
 #include <sstream>
 #include <unistd.h>
 
-// File-transfer function defined in server.cpp.
+// Implemented in server.cpp.
 extern void send_file(int client_socket);
 
-ThreadPool::ThreadPool(size_t threads) {
+ThreadPool::ThreadPool(size_t threads,
+                       size_t max_clients)
+    : max_connections(max_clients) {
+
     for (size_t i = 0; i < threads; ++i) {
         workers.emplace_back(&ThreadPool::worker, this);
     }
@@ -17,21 +20,24 @@ ThreadPool::ThreadPool(size_t threads) {
     std::lock_guard<std::mutex> lock(metrics_mutex);
 
     std::cout << "Thread pool created with "
-              << threads
-              << " worker threads\n";
+              << threads << " worker threads\n"
+              << "Maximum accepted connections: "
+              << max_connections << '\n';
 }
 
-void ThreadPool::enqueue(int client_socket) {
-    size_t queue_length = 0;
+bool ThreadPool::enqueue(int client_socket) {
+    size_t queue_length;
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
 
-        if (stop) {
-            close(client_socket);
-            return;
+        if (stop ||
+            outstanding_connections >= max_connections) {
+            return false;
         }
 
+        // Reserve a connection slot BEFORE queuing.
+        ++outstanding_connections;
         tasks.push(client_socket);
         queue_length = tasks.size();
     }
@@ -39,119 +45,115 @@ void ThreadPool::enqueue(int client_socket) {
     {
         std::lock_guard<std::mutex> lock(metrics_mutex);
 
-        std::cout << "[QUEUE] New client enqueued"
-                  << " | Queue length: "
-                  << queue_length
+        std::cout << "[QUEUE] Client accepted"
+                  << " | Queue length: " << queue_length
                   << " | Active workers: "
-                  << active_workers.load()
-                  << '\n';
+                  << active_workers.load() << '\n';
     }
 
-    // Wake one available worker.
     condition.notify_one();
+    return true;
 }
 
 void ThreadPool::worker() {
     while (true) {
         int client_socket;
-        size_t queue_length = 0;
+        size_t queue_length;
 
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
 
-            // Wait until a client arrives or shutdown begins.
             condition.wait(lock, [this] {
                 return stop || !tasks.empty();
             });
 
-            if (stop && tasks.empty()) {
+            if (stop && tasks.empty())
                 return;
-            }
 
             client_socket = tasks.front();
             tasks.pop();
 
             queue_length = tasks.size();
-
-            // Record the active worker before releasing
-            // the queue lock.
             ++active_workers;
         }
 
         {
-            std::ostringstream message;
+            std::ostringstream output;
 
-            message << "[WORKER] Thread "
-                    << std::this_thread::get_id()
-                    << " started client"
-                    << " | Active workers: "
-                    << active_workers.load()
-                    << " | Queue length: "
-                    << queue_length;
+            output << "[WORKER] Thread "
+                   << std::this_thread::get_id()
+                   << " handling client"
+                   << " | Active workers: "
+                   << active_workers.load()
+                   << " | Queue length: "
+                   << queue_length;
 
             std::lock_guard<std::mutex> lock(metrics_mutex);
-            std::cout << message.str() << '\n';
+            std::cout << output.str() << '\n';
         }
 
-        // Measure the time spent servicing this client.
         auto start = std::chrono::steady_clock::now();
 
         send_file(client_socket);
         close(client_socket);
 
-        auto end = std::chrono::steady_clock::now();
+        auto finish = std::chrono::steady_clock::now();
 
-        auto duration =
+        auto elapsed =
             std::chrono::duration_cast<
                 std::chrono::microseconds
-            >(end - start);
+            >(finish - start);
 
-        uint64_t service_time_us =
-            static_cast<uint64_t>(duration.count());
+        total_service_time_us.fetch_add(
+            static_cast<uint64_t>(elapsed.count())
+        );
 
-        // Update cumulative statistics.
-        total_service_time_us.fetch_add(service_time_us);
+        ++completed_tasks;
+        --active_workers;
 
-        completed_tasks.fetch_add(1);
-
-        active_workers.fetch_sub(1);
+        // Release the connection slot when work finishes.
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            --outstanding_connections;
+        }
 
         print_metrics();
     }
 }
 
 void ThreadPool::print_metrics() {
-    uint64_t completed = completed_tasks.load();
-    uint64_t total_us = total_service_time_us.load();
-
-    double average_ms = 0.0;
-
-    if (completed > 0) {
-        average_ms =
-            static_cast<double>(total_us) /
-            static_cast<double>(completed) /
-            1000.0;
-    }
-
-    size_t queue_length = 0;
+    size_t queue_length;
+    size_t outstanding;
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         queue_length = tasks.size();
+        outstanding = outstanding_connections;
     }
+
+    uint64_t completed = completed_tasks.load();
+    uint64_t total_time = total_service_time_us.load();
+
+    double average_ms = completed == 0
+        ? 0.0
+        : static_cast<double>(total_time) /
+          static_cast<double>(completed) / 1000.0;
 
     std::lock_guard<std::mutex> lock(metrics_mutex);
 
-    std::cout << "\n========== THREAD POOL METRICS ==========\n"
-              << "Active workers: "
-              << active_workers.load() << '\n'
-              << "Queue length: "
-              << queue_length << '\n'
-              << "Completed requests: "
-              << completed << '\n'
-              << "Average service time: "
-              << average_ms << " ms\n"
-              << "=========================================\n\n";
+    std::cout
+        << "\n========== THREAD POOL METRICS ==========\n"
+        << "Active workers: "
+        << active_workers.load() << '\n'
+        << "Queue length: "
+        << queue_length << '\n'
+        << "Outstanding connections: "
+        << outstanding << '\n'
+        << "Completed requests: "
+        << completed << '\n'
+        << "Average service time: "
+        << average_ms << " ms\n"
+        << "=========================================\n\n";
 }
 
 ThreadPool::~ThreadPool() {
@@ -160,14 +162,11 @@ ThreadPool::~ThreadPool() {
         stop = true;
     }
 
-    // Wake all sleeping workers.
     condition.notify_all();
 
-    // Wait for worker threads to finish.
-    for (std::thread& worker : workers) {
-        if (worker.joinable()) {
-            worker.join();
-        }
+    for (std::thread& thread : workers) {
+        if (thread.joinable())
+            thread.join();
     }
 
     print_metrics();

@@ -8,13 +8,13 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <algorithm>
 
 #include <openssl/evp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -24,6 +24,13 @@ constexpr int PORT = 9000;
 constexpr size_t BUFFER_SIZE = 4096;
 constexpr size_t SHA256_SIZE = 32;
 constexpr size_t WORKER_COUNT = 4;
+constexpr size_t MAX_CONNECTIONS = 8;
+
+// 100 MiB maximum transfer.
+constexpr uint64_t MAX_FILE_SIZE =
+    100ULL * 1024ULL * 1024ULL;
+
+constexpr int IDLE_TIMEOUT_SECONDS = 10;
 
 std::mutex log_mutex;
 
@@ -72,19 +79,19 @@ bool recv_all(int sock, void* data, size_t size) {
     return true;
 }
 
-// Send 64-bit integer in network byte order.
+// 64-bit integer in network byte order.
 bool send_u64(int sock, uint64_t value) {
     unsigned char bytes[8];
 
     for (int i = 7; i >= 0; --i) {
-        bytes[i] = static_cast<unsigned char>(value & 255);
+        bytes[i] =
+            static_cast<unsigned char>(value & 255);
         value >>= 8;
     }
 
     return send_all(sock, bytes, sizeof(bytes));
 }
 
-// Receive 64-bit integer in network byte order.
 bool recv_u64(int sock, uint64_t& value) {
     unsigned char bytes[8];
 
@@ -99,12 +106,24 @@ bool recv_u64(int sock, uint64_t& value) {
     return true;
 }
 
-// Safe filename: no paths or hidden special entries.
-bool valid_filename(const std::string& name) {
-    if (name.empty() || name.size() >= 256)
-        return false;
+// Apply timeout to receive and send operations.
+bool set_socket_timeout(int sock) {
+    timeval timeout{};
+    timeout.tv_sec = IDLE_TIMEOUT_SECONDS;
+    timeout.tv_usec = 0;
 
-    if (name == "." || name == "..")
+    return setsockopt(
+        sock, SOL_SOCKET, SO_RCVTIMEO,
+        &timeout, sizeof(timeout)) == 0
+        &&
+        setsockopt(
+            sock, SOL_SOCKET, SO_SNDTIMEO,
+            &timeout, sizeof(timeout)) == 0;
+}
+
+bool valid_filename(const std::string& name) {
+    if (name.empty() || name.size() >= 256 ||
+        name == "." || name == "..")
         return false;
 
     for (unsigned char c : name) {
@@ -116,7 +135,6 @@ bool valid_filename(const std::string& name) {
     return true;
 }
 
-// Receive a filename from the client.
 bool receive_filename(int sock, std::string& name) {
     uint32_t net_len = 0;
 
@@ -129,11 +147,9 @@ bool receive_filename(int sock, std::string& name) {
         return false;
 
     name.assign(len, '\0');
-
     return recv_all(sock, name.data(), len);
 }
 
-// Write all bytes into an open local file.
 bool write_all_fd(int fd, const void* data, size_t size) {
     const char* p = static_cast<const char*>(data);
 
@@ -153,12 +169,12 @@ bool write_all_fd(int fd, const void* data, size_t size) {
     return true;
 }
 
-// Download: server -> client.
+// DOWNLOAD: server to client.
 void download_file(int sock, const std::string& name) {
     std::ifstream file(name, std::ios::binary);
 
     if (!file) {
-        log_message("Download file not found: " + name);
+        log_message("DOWNLOAD REJECTED: file not found");
         send_u64(sock, 0);
         return;
     }
@@ -167,7 +183,7 @@ void download_file(int sock, const std::string& name) {
     std::streampos pos = file.tellg();
 
     if (pos <= 0) {
-        log_message("Download file empty or unreadable");
+        log_message("DOWNLOAD REJECTED: empty/unreadable");
         send_u64(sock, 0);
         return;
     }
@@ -175,6 +191,15 @@ void download_file(int sock, const std::string& name) {
     uint64_t size = static_cast<uint64_t>(
         static_cast<std::streamoff>(pos)
     );
+
+    // Check the size before transmitting the file.
+    if (size > MAX_FILE_SIZE) {
+        log_message(
+            "DOWNLOAD REJECTED: exceeds 100 MiB limit"
+        );
+        send_u64(sock, 0);
+        return;
+    }
 
     file.seekg(0, std::ios::beg);
 
@@ -197,7 +222,9 @@ void download_file(int sock, const std::string& name) {
 
     while (sent < size) {
         size_t amount = static_cast<size_t>(
-            std::min<uint64_t>(size - sent, BUFFER_SIZE)
+            std::min<uint64_t>(
+                size - sent, BUFFER_SIZE
+            )
         );
 
         file.read(buffer, amount);
@@ -209,8 +236,9 @@ void download_file(int sock, const std::string& name) {
         if (EVP_DigestUpdate(
                 ctx.get(), buffer,
                 static_cast<size_t>(count)) != 1 ||
-            !send_all(sock, buffer,
-                      static_cast<size_t>(count)))
+            !send_all(
+                sock, buffer,
+                static_cast<size_t>(count)))
             return;
 
         sent += static_cast<uint64_t>(count);
@@ -232,13 +260,11 @@ void download_file(int sock, const std::string& name) {
     }
 }
 
-// Upload: client -> server.
+// UPLOAD: client to server.
 void upload_file(int sock, const std::string& name) {
-    // uploads/ is created during project setup.
     const std::string path = "uploads/" + name;
 
-    // Exclusive creation prevents overwriting uploads.
-    // O_NOFOLLOW protects against final-component symlinks.
+    // Prevent overwrites and final-component symlinks.
     int fd = open(
         path.c_str(),
         O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
@@ -256,8 +282,9 @@ void upload_file(int sock, const std::string& name) {
     }
 
     if (fd < 0) {
-        log_message("Upload rejected (file already exists or inaccessible): "
-                    + name);
+        log_message(
+            "UPLOAD REJECTED: existing/inaccessible file"
+        );
         return;
     }
 
@@ -267,7 +294,15 @@ void upload_file(int sock, const std::string& name) {
         uint64_t size = 0;
 
         if (!recv_u64(sock, size)) {
-            log_message("Failed to receive upload size");
+            log_message("UPLOAD FAILED: missing size");
+            break;
+        }
+
+        // Reject oversized uploads before writing content.
+        if (size > MAX_FILE_SIZE) {
+            log_message(
+                "UPLOAD REJECTED: exceeds 100 MiB limit"
+            );
             break;
         }
 
@@ -304,7 +339,8 @@ void upload_file(int sock, const std::string& name) {
             }
 
             if (!write_all_fd(
-                    fd, buffer, static_cast<size_t>(n)) ||
+                    fd, buffer,
+                    static_cast<size_t>(n)) ||
                 EVP_DigestUpdate(
                     ctx.get(), buffer,
                     static_cast<size_t>(n)) != 1) {
@@ -320,17 +356,17 @@ void upload_file(int sock, const std::string& name) {
 
         unsigned char expected[SHA256_SIZE];
         unsigned char actual[SHA256_SIZE];
-        unsigned int actual_len = 0;
+        unsigned int hash_len = 0;
 
         if (!recv_all(sock, expected, SHA256_SIZE) ||
             EVP_DigestFinal_ex(
-                ctx.get(), actual, &actual_len) != 1 ||
-            actual_len != SHA256_SIZE)
+                ctx.get(), actual, &hash_len) != 1 ||
+            hash_len != SHA256_SIZE)
             break;
 
         if (std::memcmp(
                 expected, actual, SHA256_SIZE) != 0) {
-            log_message("Upload SHA-256 mismatch: " + name);
+            log_message("UPLOAD FAILED: checksum mismatch");
             break;
         }
 
@@ -352,12 +388,11 @@ void upload_file(int sock, const std::string& name) {
         log_message("UPLOAD FAILED: " + name);
     }
 
-    // Acknowledge whether the server stored the file.
     unsigned char result = success ? 1 : 0;
     send_all(sock, &result, 1);
 }
 
-// Called by the existing thread pool.
+// Called by each thread-pool worker.
 void send_file(int client_socket) {
     auto start = std::chrono::steady_clock::now();
 
@@ -366,7 +401,9 @@ void send_file(int client_socket) {
 
     if (!recv_all(client_socket, &operation, 1) ||
         !receive_filename(client_socket, filename)) {
-        log_message("Invalid client request");
+        log_message(
+            "Request failed or timed out while reading header"
+        );
         return;
     }
 
@@ -387,6 +424,7 @@ void send_file(int client_socket) {
     }
 
     auto end = std::chrono::steady_clock::now();
+
     std::chrono::duration<double> elapsed = end - start;
 
     log_message(
@@ -396,12 +434,13 @@ void send_file(int client_socket) {
 }
 
 int main() {
-    // Ensure the upload destination is a real directory.
+    // Require a real uploads directory.
     struct stat upload_info{};
 
     if (lstat("uploads", &upload_info) != 0 ||
         !S_ISDIR(upload_info.st_mode)) {
-        std::cerr << "Error: uploads/ directory is missing\n";
+        std::cerr
+            << "Error: uploads/ directory is missing\n";
         return 1;
     }
 
@@ -443,8 +482,11 @@ int main() {
     }
 
     log_message("Thread pool server listening on port 9000");
+    log_message("Maximum file size: 100 MiB");
+    log_message("Maximum connections: 8");
+    log_message("Socket timeout: 10 seconds");
 
-    ThreadPool pool(WORKER_COUNT);
+    ThreadPool pool(WORKER_COUNT, MAX_CONNECTIONS);
 
     while (true) {
         sockaddr_in client_address{};
@@ -462,17 +504,32 @@ int main() {
             continue;
         }
 
+        if (!set_socket_timeout(client_socket)) {
+            perror("setsockopt timeout");
+            close(client_socket);
+            continue;
+        }
+
         char client_ip[INET_ADDRSTRLEN];
 
         if (inet_ntop(
-                AF_INET, &client_address.sin_addr,
-                client_ip, sizeof(client_ip))) {
+                AF_INET,
+                &client_address.sin_addr,
+                client_ip,
+                sizeof(client_ip))) {
             log_message(
-                "Client connected: " + std::string(client_ip)
+                "Client connected: " +
+                std::string(client_ip)
             );
         }
 
-        pool.enqueue(client_socket);
+        // Reject the connection when all slots are occupied.
+        if (!pool.enqueue(client_socket)) {
+            log_message(
+                "CONNECTION REJECTED: maximum of 8 reached"
+            );
+            close(client_socket);
+        }
     }
 
     close(server_fd);
