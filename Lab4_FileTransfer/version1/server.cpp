@@ -1,33 +1,31 @@
 
 #include <iostream>
 #include <fstream>
+#include <string>
 #include <chrono>
 #include <cstdint>
+#include <cstddef>
 #include <cerrno>
 #include <cstdio>
-#include <limits>
 #include <memory>
+
 #include <openssl/evp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define PORT 9000
-#define BUFFER_SIZE 4096
-
+constexpr int PORT = 9000;
+constexpr size_t BUFFER_SIZE = 4096;
 constexpr size_t SHA256_SIZE = 32;
 
-// Send all bytes, including when send() is partial.
+// Send all requested bytes.
 bool send_all(int sock, const void* data, size_t length) {
     const char* bytes = static_cast<const char*>(data);
     size_t sent = 0;
 
     while (sent < length) {
         ssize_t n = send(
-            sock,
-            bytes + sent,
-            length - sent,
-            MSG_NOSIGNAL
+            sock, bytes + sent, length - sent, MSG_NOSIGNAL
         );
 
         if (n < 0 && errno == EINTR)
@@ -44,17 +42,14 @@ bool send_all(int sock, const void* data, size_t length) {
     return true;
 }
 
-// Receive an exact number of bytes.
+// Receive all requested bytes.
 bool recv_all(int sock, void* data, size_t length) {
     char* bytes = static_cast<char*>(data);
     size_t received = 0;
 
     while (received < length) {
         ssize_t n = recv(
-            sock,
-            bytes + received,
-            length - received,
-            0
+            sock, bytes + received, length - received, 0
         );
 
         if (n < 0 && errno == EINTR)
@@ -69,21 +64,26 @@ bool recv_all(int sock, void* data, size_t length) {
     return true;
 }
 
-// Respond when a file is unavailable.
-void send_not_found(int client_socket) {
-    uint32_t zero = htonl(0);
-    send_all(client_socket, &zero, sizeof(zero));
+// Send a 64-bit integer in network byte order.
+bool send_u64(int sock, uint64_t value) {
+    unsigned char bytes[8];
+
+    for (int i = 7; i >= 0; --i) {
+        bytes[i] = static_cast<unsigned char>(value & 0xFF);
+        value >>= 8;
+    }
+
+    return send_all(sock, bytes, sizeof(bytes));
 }
 
 void send_file(int client_socket) {
     uint32_t net_name_len = 0;
 
-    // Receive filename length.
     if (!recv_all(
             client_socket,
             &net_name_len,
             sizeof(net_name_len))) {
-        std::cerr << "Could not read filename length\n";
+        std::cerr << "Failed to read filename length\n";
         return;
     }
 
@@ -94,64 +94,62 @@ void send_file(int client_socket) {
         return;
     }
 
-    // Receive filename.
     std::string filename(name_len, '\0');
 
     if (!recv_all(
             client_socket,
             filename.data(),
             name_len)) {
-        std::cerr << "Could not read filename\n";
+        std::cerr << "Failed to read filename\n";
         return;
     }
 
     std::cout << "File requested: "
               << filename << '\n';
 
-    // Open requested file.
+    // Open the requested file.
     std::ifstream file(filename, std::ios::binary);
 
     if (!file) {
         std::cerr << "File not found\n";
-        send_not_found(client_socket);
+        send_u64(client_socket, 0);
         return;
     }
 
-    // Determine file size.
+    // Determine file size using a 64-bit integer.
     file.seekg(0, std::ios::end);
     std::streampos end_pos = file.tellg();
 
-    if (end_pos <= 0 ||
-        end_pos > static_cast<std::streampos>(
-            std::numeric_limits<uint32_t>::max())) {
-        std::cerr << "Empty or unsupported file size\n";
-        send_not_found(client_socket);
+    if (end_pos <= 0) {
+        std::cerr << "Empty file or unable to read size\n";
+        send_u64(client_socket, 0);
         return;
     }
 
-    uint32_t file_size =
-        static_cast<uint32_t>(end_pos);
+    uint64_t file_size = static_cast<uint64_t>(
+        static_cast<std::streamoff>(end_pos)
+    );
 
     file.seekg(0, std::ios::beg);
+
+    if (!file) {
+        std::cerr << "Failed to rewind file\n";
+        send_u64(client_socket, 0);
+        return;
+    }
 
     std::cout << "File size: "
               << file_size << " bytes\n";
 
-    // Protocol:
-    // [4-byte file size]
-    // [file data]
+    // Updated protocol:
+    // [8-byte file size]
+    // [file contents]
     // [32-byte SHA-256 checksum]
 
-    uint32_t net_size = htonl(file_size);
-
-    if (!send_all(
-            client_socket,
-            &net_size,
-            sizeof(net_size))) {
+    if (!send_u64(client_socket, file_size))
         return;
-    }
 
-    // Initialize SHA-256 calculation.
+    // Initialize SHA-256.
     using DigestCtx = std::unique_ptr<
         EVP_MD_CTX,
         decltype(&EVP_MD_CTX_free)
@@ -168,19 +166,17 @@ void send_file(int client_socket) {
         return;
     }
 
-    // Read and send file data in chunks.
+    // Transfer file contents.
     char buffer[BUFFER_SIZE];
     uint64_t total_sent = 0;
 
-    while (file) {
+    while (total_sent < file_size) {
         file.read(buffer, sizeof(buffer));
-
         std::streamsize count = file.gcount();
 
         if (count <= 0)
             break;
 
-        // Include this chunk in the hash.
         if (EVP_DigestUpdate(
                 ctx.get(),
                 buffer,
@@ -193,15 +189,15 @@ void send_file(int client_socket) {
             return;
         }
 
-        total_sent += static_cast<size_t>(count);
+        total_sent += static_cast<uint64_t>(count);
     }
 
-    if (file.bad() || total_sent != file_size) {
-        std::cerr << "File read failed or size changed\n";
+    if (total_sent != file_size) {
+        std::cerr << "Incomplete file read\n";
         return;
     }
 
-    // Finalize the SHA-256 checksum.
+    // Finalize and send SHA-256.
     unsigned char digest[SHA256_SIZE];
     unsigned int digest_len = 0;
 
@@ -210,11 +206,8 @@ void send_file(int client_socket) {
             digest,
             &digest_len) != 1 ||
         digest_len != SHA256_SIZE ||
-        !send_all(
-            client_socket,
-            digest,
-            SHA256_SIZE)) {
-        std::cerr << "Failed to send SHA-256 checksum\n";
+        !send_all(client_socket, digest, SHA256_SIZE)) {
+        std::cerr << "Failed to send checksum\n";
         return;
     }
 
@@ -223,7 +216,6 @@ void send_file(int client_socket) {
 }
 
 int main() {
-    // Create TCP socket.
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (server_fd < 0) {
@@ -231,7 +223,6 @@ int main() {
         return 1;
     }
 
-    // Allow the port to be reused after restarting.
     int reuse = 1;
 
     if (setsockopt(
@@ -246,12 +237,10 @@ int main() {
     }
 
     sockaddr_in address{};
-
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(PORT);
 
-    // Bind server to port.
     if (bind(
             server_fd,
             reinterpret_cast<sockaddr*>(&address),
@@ -261,26 +250,23 @@ int main() {
         return 1;
     }
 
-    // Listen for incoming clients.
-    if (listen(server_fd, 5) < 0) {
+    if (listen(server_fd, 10) < 0) {
         perror("listen");
         close(server_fd);
         return 1;
     }
 
     std::cout << "Server listening on port "
-              << PORT << std::endl;
+              << PORT << '\n';
 
-    // Handle clients sequentially.
+    // Single-threaded client handling.
     while (true) {
         sockaddr_in client_address{};
-        socklen_t client_len =
-            sizeof(client_address);
+        socklen_t client_len = sizeof(client_address);
 
         int client_socket = accept(
             server_fd,
-            reinterpret_cast<sockaddr*>(
-                &client_address),
+            reinterpret_cast<sockaddr*>(&client_address),
             &client_len
         );
 
@@ -289,7 +275,6 @@ int main() {
             continue;
         }
 
-        // Record client IP address.
         char client_ip[INET_ADDRSTRLEN];
 
         if (inet_ntop(
@@ -301,15 +286,11 @@ int main() {
                       << client_ip << '\n';
         }
 
-        // Start transfer timer.
-        auto start =
-            std::chrono::steady_clock::now();
+        auto start = std::chrono::steady_clock::now();
 
         send_file(client_socket);
 
-        // Stop transfer timer.
-        auto finish =
-            std::chrono::steady_clock::now();
+        auto finish = std::chrono::steady_clock::now();
 
         std::chrono::duration<double> elapsed =
             finish - start;

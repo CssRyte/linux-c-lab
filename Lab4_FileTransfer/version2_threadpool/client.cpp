@@ -8,14 +8,14 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+
 #include <openssl/evp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define PORT 9000
-#define BUFFER_SIZE 4096
-
+constexpr int PORT = 9000;
+constexpr size_t BUFFER_SIZE = 4096;
 constexpr size_t SHA256_SIZE = 32;
 
 // Send all requested bytes.
@@ -31,11 +31,13 @@ bool send_all(int sock, const void* data, size_t length) {
             MSG_NOSIGNAL
         );
 
-        if (n < 0 && errno == EINTR)
+        if (n < 0 && errno == EINTR) {
             continue;
+        }
 
-        if (n <= 0)
+        if (n <= 0) {
             return false;
+        }
 
         sent += static_cast<size_t>(n);
     }
@@ -43,7 +45,7 @@ bool send_all(int sock, const void* data, size_t length) {
     return true;
 }
 
-// Receive exactly the requested number of bytes.
+// Receive all requested bytes.
 bool recv_all(int sock, void* data, size_t length) {
     char* bytes = static_cast<char*>(data);
     size_t received = 0;
@@ -56,13 +58,33 @@ bool recv_all(int sock, void* data, size_t length) {
             0
         );
 
-        if (n < 0 && errno == EINTR)
+        if (n < 0 && errno == EINTR) {
             continue;
+        }
 
-        if (n <= 0)
+        if (n <= 0) {
             return false;
+        }
 
         received += static_cast<size_t>(n);
+    }
+
+    return true;
+}
+
+// Read an 8-byte unsigned integer in network byte order.
+bool recv_u64(int sock, uint64_t& value) {
+    unsigned char bytes[8];
+
+    if (!recv_all(sock, bytes, sizeof(bytes))) {
+        return false;
+    }
+
+    value = 0;
+
+    for (unsigned char byte : bytes) {
+        value = (value << 8) |
+                static_cast<uint64_t>(byte);
     }
 
     return true;
@@ -76,12 +98,13 @@ int main(int argc, char* argv[]) {
 
     std::string filename = argv[1];
 
-    if (filename.empty() || filename.size() >= 256) {
+    if (filename.empty() || filename.size() >= 256 ||
+        filename.find('/') != std::string::npos ||
+        filename.find('\\') != std::string::npos) {
         std::cerr << "Invalid filename\n";
         return 1;
     }
 
-    // Create client socket.
     int sock = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sock < 0) {
@@ -89,17 +112,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Configure server address.
     sockaddr_in server{};
-
     server.sin_family = AF_INET;
     server.sin_port = htons(PORT);
 
     if (inet_pton(
             AF_INET,
             "127.0.0.1",
-            &server.sin_addr) != 1 ||
-        connect(
+            &server.sin_addr) != 1) {
+        std::cerr << "Invalid server address\n";
+        close(sock);
+        return 1;
+    }
+
+    if (connect(
             sock,
             reinterpret_cast<sockaddr*>(&server),
             sizeof(server)) < 0) {
@@ -110,7 +136,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Connected to server\n";
 
-    // Send requested filename.
+    // Request the filename.
     uint32_t net_name_len = htonl(
         static_cast<uint32_t>(filename.size())
     );
@@ -123,24 +149,19 @@ int main(int argc, char* argv[]) {
             sock,
             filename.data(),
             filename.size())) {
-        std::cerr << "Failed to send filename\n";
+        std::cerr << "Failed to request file\n";
         close(sock);
         return 1;
     }
 
-    // Receive file size.
-    uint32_t net_size = 0;
+    // Read the 64-bit file size.
+    uint64_t file_size = 0;
 
-    if (!recv_all(
-            sock,
-            &net_size,
-            sizeof(net_size))) {
+    if (!recv_u64(sock, file_size)) {
         std::cerr << "Failed to receive file size\n";
         close(sock);
         return 1;
     }
-
-    uint32_t file_size = ntohl(net_size);
 
     if (file_size == 0) {
         std::cerr << "File not found or empty\n";
@@ -151,7 +172,6 @@ int main(int argc, char* argv[]) {
     std::cout << "File size: "
               << file_size << " bytes\n";
 
-    // Create destination file.
     std::string output_name =
         "received_" + filename;
 
@@ -161,48 +181,43 @@ int main(int argc, char* argv[]) {
     );
 
     if (!output) {
-        std::cerr << "Cannot create destination file\n";
+        std::cerr << "Cannot create output file\n";
         close(sock);
         return 1;
     }
 
-    // Initialize SHA-256 calculation.
-    using DigestCtx = std::unique_ptr<
-        EVP_MD_CTX,
-        decltype(&EVP_MD_CTX_free)
+    using DigestContext = std::unique_ptr<
+        EVP_MD_CTX, decltype(&EVP_MD_CTX_free)
     >;
 
-    DigestCtx ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    DigestContext ctx(
+        EVP_MD_CTX_new(), EVP_MD_CTX_free
+    );
 
     if (!ctx ||
         EVP_DigestInit_ex(
-            ctx.get(),
-            EVP_sha256(),
-            nullptr) != 1) {
-        std::cerr << "Failed to initialize SHA-256\n";
+            ctx.get(), EVP_sha256(), nullptr) != 1) {
+        std::cerr << "SHA-256 initialization failed\n";
         close(sock);
         return 1;
     }
 
     char buffer[BUFFER_SIZE];
-    uint32_t received = 0;
+    uint64_t total_received = 0;
 
-    // Receive the file contents.
-    while (received < file_size) {
-        size_t amount = std::min<size_t>(
-            file_size - received,
-            sizeof(buffer)
+    while (total_received < file_size) {
+        size_t amount = static_cast<size_t>(
+            std::min<uint64_t>(
+                file_size - total_received,
+                BUFFER_SIZE
+            )
         );
 
-        ssize_t count = recv(
-            sock,
-            buffer,
-            amount,
-            0
-        );
+        ssize_t count = recv(sock, buffer, amount, 0);
 
-        if (count < 0 && errno == EINTR)
+        if (count < 0 && errno == EINTR) {
             continue;
+        }
 
         if (count <= 0) {
             std::cerr << "Transfer interrupted\n";
@@ -210,45 +225,42 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Write received bytes.
         output.write(buffer, count);
 
-        // Include received bytes in SHA-256 hash.
         if (!output ||
             EVP_DigestUpdate(
                 ctx.get(),
                 buffer,
                 static_cast<size_t>(count)) != 1) {
-            std::cerr << "Failed to write or hash file\n";
+            std::cerr << "File write or SHA-256 failed\n";
             close(sock);
             return 1;
         }
 
-        received += static_cast<uint32_t>(count);
+        total_received += static_cast<uint64_t>(count);
     }
 
-    // Receive checksum from the server.
+    // Receive the server's SHA-256 checksum.
     unsigned char expected_digest[SHA256_SIZE];
 
     if (!recv_all(
             sock,
             expected_digest,
             SHA256_SIZE)) {
-        std::cerr << "Failed to receive SHA-256 checksum\n";
+        std::cerr << "Failed to receive checksum\n";
         close(sock);
         return 1;
     }
 
-    // Calculate checksum of received file data.
     unsigned char actual_digest[SHA256_SIZE];
-    unsigned int actual_len = 0;
+    unsigned int digest_len = 0;
 
     if (EVP_DigestFinal_ex(
             ctx.get(),
             actual_digest,
-            &actual_len) != 1 ||
-        actual_len != SHA256_SIZE) {
-        std::cerr << "Failed to calculate SHA-256\n";
+            &digest_len) != 1 ||
+        digest_len != SHA256_SIZE) {
+        std::cerr << "SHA-256 calculation failed\n";
         close(sock);
         return 1;
     }
@@ -256,24 +268,24 @@ int main(int argc, char* argv[]) {
     output.close();
     close(sock);
 
-    // Compare server and client checksums.
+    if (!output) {
+        std::cerr << "Failed to finish writing file\n";
+        return 1;
+    }
+
     if (std::memcmp(
             expected_digest,
             actual_digest,
             SHA256_SIZE) != 0) {
-        std::cerr
-            << "SHA-256 verification: FAIL "
-            << "(checksum mismatch)\n";
-
+        std::cerr << "SHA-256 verification: FAIL\n";
         return 1;
     }
 
-    // Successful transfer.
     std::cout << "File received successfully: "
               << output_name << '\n';
 
     std::cout << "Total bytes received: "
-              << received << '\n';
+              << total_received << '\n';
 
     std::cout << "SHA-256 verification: PASS\n";
 
