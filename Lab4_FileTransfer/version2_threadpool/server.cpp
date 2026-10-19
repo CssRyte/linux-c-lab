@@ -5,15 +5,17 @@
 #include <chrono>
 #include <cstdint>
 #include <cerrno>
-#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <sstream>
+#include <algorithm>
 
 #include <openssl/evp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "threadpool.h"
@@ -30,247 +32,379 @@ void log_message(const std::string& message) {
     std::cout << message << std::endl;
 }
 
-// Send exactly the number of bytes requested.
-bool send_all(int sock, const void* data, size_t length) {
-    const char* bytes = static_cast<const char*>(data);
-    size_t sent = 0;
+// Reliable TCP send.
+bool send_all(int sock, const void* data, size_t size) {
+    const char* p = static_cast<const char*>(data);
 
-    while (sent < length) {
-        ssize_t n = send(
-            sock, bytes + sent, length - sent, MSG_NOSIGNAL
-        );
+    while (size > 0) {
+        ssize_t n = send(sock, p, size, MSG_NOSIGNAL);
 
-        if (n < 0 && errno == EINTR) {
+        if (n < 0 && errno == EINTR)
             continue;
-        }
 
-        if (n <= 0) {
-            perror("send");
+        if (n <= 0)
             return false;
-        }
 
-        sent += static_cast<size_t>(n);
+        p += n;
+        size -= static_cast<size_t>(n);
     }
 
     return true;
 }
 
-// Receive exactly the number of bytes requested.
-bool recv_all(int sock, void* data, size_t length) {
-    char* bytes = static_cast<char*>(data);
-    size_t received = 0;
+// Reliable TCP receive.
+bool recv_all(int sock, void* data, size_t size) {
+    char* p = static_cast<char*>(data);
 
-    while (received < length) {
-        ssize_t n = recv(
-            sock, bytes + received, length - received, 0
-        );
+    while (size > 0) {
+        ssize_t n = recv(sock, p, size, 0);
 
-        if (n < 0 && errno == EINTR) {
+        if (n < 0 && errno == EINTR)
             continue;
-        }
 
-        if (n <= 0) {
+        if (n <= 0)
             return false;
-        }
 
-        received += static_cast<size_t>(n);
+        p += n;
+        size -= static_cast<size_t>(n);
     }
 
     return true;
 }
 
-// Send a 64-bit integer in network byte order.
+// Send 64-bit integer in network byte order.
 bool send_u64(int sock, uint64_t value) {
     unsigned char bytes[8];
 
     for (int i = 7; i >= 0; --i) {
-        bytes[i] = static_cast<unsigned char>(
-            value & 0xFF
-        );
+        bytes[i] = static_cast<unsigned char>(value & 255);
         value >>= 8;
     }
 
     return send_all(sock, bytes, sizeof(bytes));
 }
 
-// 0 means file unavailable in this lab protocol.
-void send_not_found(int sock) {
-    send_u64(sock, 0);
+// Receive 64-bit integer in network byte order.
+bool recv_u64(int sock, uint64_t& value) {
+    unsigned char bytes[8];
+
+    if (!recv_all(sock, bytes, sizeof(bytes)))
+        return false;
+
+    value = 0;
+
+    for (unsigned char byte : bytes)
+        value = (value << 8) | byte;
+
+    return true;
 }
 
-// Called by threadpool.cpp for each client.
-void send_file(int client_socket) {
-    auto start = std::chrono::steady_clock::now();
+// Safe filename: no paths or hidden special entries.
+bool valid_filename(const std::string& name) {
+    if (name.empty() || name.size() >= 256)
+        return false;
 
-    uint32_t net_name_len = 0;
+    if (name == "." || name == "..")
+        return false;
 
-    if (!recv_all(
-            client_socket,
-            &net_name_len,
-            sizeof(net_name_len))) {
-        log_message("Failed to receive filename length");
-        return;
+    for (unsigned char c : name) {
+        if (c == '/' || c == '\\' || c == 0 ||
+            c < 32 || c == 127)
+            return false;
     }
 
-    uint32_t name_len = ntohl(net_name_len);
+    return true;
+}
 
-    if (name_len == 0 || name_len >= 256) {
-        log_message("Invalid filename length");
-        return;
+// Receive a filename from the client.
+bool receive_filename(int sock, std::string& name) {
+    uint32_t net_len = 0;
+
+    if (!recv_all(sock, &net_len, sizeof(net_len)))
+        return false;
+
+    uint32_t len = ntohl(net_len);
+
+    if (len == 0 || len >= 256)
+        return false;
+
+    name.assign(len, '\0');
+
+    return recv_all(sock, name.data(), len);
+}
+
+// Write all bytes into an open local file.
+bool write_all_fd(int fd, const void* data, size_t size) {
+    const char* p = static_cast<const char*>(data);
+
+    while (size > 0) {
+        ssize_t n = write(fd, p, size);
+
+        if (n < 0 && errno == EINTR)
+            continue;
+
+        if (n <= 0)
+            return false;
+
+        p += n;
+        size -= static_cast<size_t>(n);
     }
 
-    std::string filename(name_len, '\0');
+    return true;
+}
 
-    if (!recv_all(
-            client_socket,
-            filename.data(),
-            name_len)) {
-        log_message("Failed to receive filename");
-        return;
-    }
-
-    log_message("File requested: " + filename);
-
-    // Basic path validation: allow files in the server's
-    // current directory, not arbitrary system paths.
-    if (filename.find('/') != std::string::npos ||
-        filename.find('\\') != std::string::npos ||
-        filename.find('\0') != std::string::npos ||
-        filename == "." || filename == "..") {
-        log_message("Rejected unsafe filename");
-        send_not_found(client_socket);
-        return;
-    }
-
-    std::ifstream file(filename, std::ios::binary);
+// Download: server -> client.
+void download_file(int sock, const std::string& name) {
+    std::ifstream file(name, std::ios::binary);
 
     if (!file) {
-        log_message("File not found: " + filename);
-        send_not_found(client_socket);
+        log_message("Download file not found: " + name);
+        send_u64(sock, 0);
         return;
     }
 
     file.seekg(0, std::ios::end);
-    std::streampos end_pos = file.tellg();
+    std::streampos pos = file.tellg();
 
-    if (end_pos <= 0) {
-        log_message("Empty or unreadable file");
-        send_not_found(client_socket);
+    if (pos <= 0) {
+        log_message("Download file empty or unreadable");
+        send_u64(sock, 0);
         return;
     }
 
-    uint64_t file_size = static_cast<uint64_t>(
-        static_cast<std::streamoff>(end_pos)
+    uint64_t size = static_cast<uint64_t>(
+        static_cast<std::streamoff>(pos)
     );
 
     file.seekg(0, std::ios::beg);
 
-    if (!file) {
-        log_message("Failed to rewind file");
-        send_not_found(client_socket);
+    if (!file || !send_u64(sock, size))
         return;
-    }
 
-    log_message(
-        "File size: " + std::to_string(file_size) +
-        " bytes"
-    );
-
-    // Send the 8-byte file size.
-    if (!send_u64(client_socket, file_size)) {
-        log_message("Failed to send file size");
-        return;
-    }
-
-    using DigestContext = std::unique_ptr<
+    using Digest = std::unique_ptr<
         EVP_MD_CTX, decltype(&EVP_MD_CTX_free)
     >;
 
-    DigestContext ctx(
-        EVP_MD_CTX_new(), EVP_MD_CTX_free
-    );
+    Digest ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
 
     if (!ctx ||
         EVP_DigestInit_ex(
-            ctx.get(), EVP_sha256(), nullptr) != 1) {
-        log_message("SHA-256 initialization failed");
+            ctx.get(), EVP_sha256(), nullptr) != 1)
         return;
-    }
 
     char buffer[BUFFER_SIZE];
-    uint64_t total_sent = 0;
+    uint64_t sent = 0;
 
-    while (total_sent < file_size) {
-        size_t remaining = static_cast<size_t>(
-            std::min<uint64_t>(
-                file_size - total_sent, BUFFER_SIZE
-            )
+    while (sent < size) {
+        size_t amount = static_cast<size_t>(
+            std::min<uint64_t>(size - sent, BUFFER_SIZE)
         );
 
-        file.read(buffer, remaining);
+        file.read(buffer, amount);
         std::streamsize count = file.gcount();
 
-        if (count <= 0) {
-            log_message("File read interrupted");
+        if (count <= 0)
             return;
-        }
 
         if (EVP_DigestUpdate(
-                ctx.get(),
-                buffer,
-                static_cast<size_t>(count)) != 1) {
-            log_message("SHA-256 update failed");
+                ctx.get(), buffer,
+                static_cast<size_t>(count)) != 1 ||
+            !send_all(sock, buffer,
+                      static_cast<size_t>(count)))
             return;
-        }
 
-        if (!send_all(
-                client_socket,
-                buffer,
-                static_cast<size_t>(count))) {
-            log_message("File transmission failed");
-            return;
-        }
-
-        total_sent += static_cast<uint64_t>(count);
+        sent += static_cast<uint64_t>(count);
     }
 
-    if (total_sent != file_size) {
-        log_message("Incomplete file transfer");
-        return;
-    }
-
-    unsigned char digest[SHA256_SIZE];
-    unsigned int digest_len = 0;
+    unsigned char hash[SHA256_SIZE];
+    unsigned int hash_len = 0;
 
     if (EVP_DigestFinal_ex(
-            ctx.get(),
-            digest,
-            &digest_len) != 1 ||
-        digest_len != SHA256_SIZE) {
-        log_message("SHA-256 finalization failed");
+            ctx.get(), hash, &hash_len) != 1 ||
+        hash_len != SHA256_SIZE)
+        return;
+
+    if (send_all(sock, hash, SHA256_SIZE)) {
+        log_message(
+            "DOWNLOAD COMPLETE: " + name +
+            " | Bytes: " + std::to_string(sent)
+        );
+    }
+}
+
+// Upload: client -> server.
+void upload_file(int sock, const std::string& name) {
+    // uploads/ is created during project setup.
+    const std::string path = "uploads/" + name;
+
+    // Exclusive creation prevents overwriting uploads.
+    // O_NOFOLLOW protects against final-component symlinks.
+    int fd = open(
+        path.c_str(),
+        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+        S_IRUSR | S_IWUSR
+    );
+
+    unsigned char ready = fd >= 0 ? 1 : 0;
+
+    if (!send_all(sock, &ready, 1)) {
+        if (fd >= 0) {
+            close(fd);
+            unlink(path.c_str());
+        }
         return;
     }
 
-    if (!send_all(
-            client_socket, digest, SHA256_SIZE)) {
-        log_message("Failed to send checksum");
+    if (fd < 0) {
+        log_message("Upload rejected (file already exists or inaccessible): "
+                    + name);
+        return;
+    }
+
+    bool success = false;
+
+    do {
+        uint64_t size = 0;
+
+        if (!recv_u64(sock, size)) {
+            log_message("Failed to receive upload size");
+            break;
+        }
+
+        using Digest = std::unique_ptr<
+            EVP_MD_CTX, decltype(&EVP_MD_CTX_free)
+        >;
+
+        Digest ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+
+        if (!ctx ||
+            EVP_DigestInit_ex(
+                ctx.get(), EVP_sha256(), nullptr) != 1)
+            break;
+
+        char buffer[BUFFER_SIZE];
+        uint64_t received = 0;
+        bool transfer_ok = true;
+
+        while (received < size) {
+            size_t amount = static_cast<size_t>(
+                std::min<uint64_t>(
+                    size - received, BUFFER_SIZE
+                )
+            );
+
+            ssize_t n = recv(sock, buffer, amount, 0);
+
+            if (n < 0 && errno == EINTR)
+                continue;
+
+            if (n <= 0) {
+                transfer_ok = false;
+                break;
+            }
+
+            if (!write_all_fd(
+                    fd, buffer, static_cast<size_t>(n)) ||
+                EVP_DigestUpdate(
+                    ctx.get(), buffer,
+                    static_cast<size_t>(n)) != 1) {
+                transfer_ok = false;
+                break;
+            }
+
+            received += static_cast<uint64_t>(n);
+        }
+
+        if (!transfer_ok || received != size)
+            break;
+
+        unsigned char expected[SHA256_SIZE];
+        unsigned char actual[SHA256_SIZE];
+        unsigned int actual_len = 0;
+
+        if (!recv_all(sock, expected, SHA256_SIZE) ||
+            EVP_DigestFinal_ex(
+                ctx.get(), actual, &actual_len) != 1 ||
+            actual_len != SHA256_SIZE)
+            break;
+
+        if (std::memcmp(
+                expected, actual, SHA256_SIZE) != 0) {
+            log_message("Upload SHA-256 mismatch: " + name);
+            break;
+        }
+
+        success = true;
+
+        log_message(
+            "UPLOAD COMPLETE: " + name +
+            " | Bytes: " + std::to_string(received) +
+            " | SHA-256: PASS"
+        );
+
+    } while (false);
+
+    if (close(fd) != 0)
+        success = false;
+
+    if (!success) {
+        unlink(path.c_str());
+        log_message("UPLOAD FAILED: " + name);
+    }
+
+    // Acknowledge whether the server stored the file.
+    unsigned char result = success ? 1 : 0;
+    send_all(sock, &result, 1);
+}
+
+// Called by the existing thread pool.
+void send_file(int client_socket) {
+    auto start = std::chrono::steady_clock::now();
+
+    char operation = 0;
+    std::string filename;
+
+    if (!recv_all(client_socket, &operation, 1) ||
+        !receive_filename(client_socket, filename)) {
+        log_message("Invalid client request");
+        return;
+    }
+
+    if (!valid_filename(filename)) {
+        log_message("Rejected unsafe filename");
+        return;
+    }
+
+    if (operation == 'D') {
+        log_message("DOWNLOAD REQUEST: " + filename);
+        download_file(client_socket, filename);
+    } else if (operation == 'U') {
+        log_message("UPLOAD REQUEST: " + filename);
+        upload_file(client_socket, filename);
+    } else {
+        log_message("Unknown operation");
         return;
     }
 
     auto end = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsed = end - start;
 
-    std::ostringstream message;
-    message << "Transfer completed: " << filename
-            << " | Bytes: " << total_sent
-            << " | Time: " << elapsed.count()
-            << " seconds";
-
-    log_message("SHA-256 checksum sent");
-    log_message(message.str());
+    log_message(
+        "Request handling time: " +
+        std::to_string(elapsed.count()) + " seconds"
+    );
 }
 
 int main() {
+    // Ensure the upload destination is a real directory.
+    struct stat upload_info{};
+
+    if (lstat("uploads", &upload_info) != 0 ||
+        !S_ISDIR(upload_info.st_mode)) {
+        std::cerr << "Error: uploads/ directory is missing\n";
+        return 1;
+    }
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (server_fd < 0) {
@@ -281,11 +415,8 @@ int main() {
     int reuse = 1;
 
     if (setsockopt(
-            server_fd,
-            SOL_SOCKET,
-            SO_REUSEADDR,
-            &reuse,
-            sizeof(reuse)) < 0) {
+            server_fd, SOL_SOCKET, SO_REUSEADDR,
+            &reuse, sizeof(reuse)) < 0) {
         perror("setsockopt");
         close(server_fd);
         return 1;
@@ -311,10 +442,7 @@ int main() {
         return 1;
     }
 
-    log_message(
-        "Thread pool server listening on port " +
-        std::to_string(PORT)
-    );
+    log_message("Thread pool server listening on port 9000");
 
     ThreadPool pool(WORKER_COUNT);
 
@@ -329,29 +457,22 @@ int main() {
         );
 
         if (client_socket < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-
-            perror("accept");
+            if (errno != EINTR)
+                perror("accept");
             continue;
         }
 
         char client_ip[INET_ADDRSTRLEN];
 
         if (inet_ntop(
-                AF_INET,
-                &client_address.sin_addr,
-                client_ip,
-                sizeof(client_ip))) {
+                AF_INET, &client_address.sin_addr,
+                client_ip, sizeof(client_ip))) {
             log_message(
-                "Client connected: " +
-                std::string(client_ip)
+                "Client connected: " + std::string(client_ip)
             );
         }
 
         pool.enqueue(client_socket);
-        log_message("Client added to task queue");
     }
 
     close(server_fd);
