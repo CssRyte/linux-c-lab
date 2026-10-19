@@ -1,0 +1,20 @@
+# Compiled files
+server
+client
+*.o
+
+# Benchmark data and logs
+*.bin
+*.log
+
+# Received files
+received_*
+
+# Generated test files
+test*.txt
+upload*.txt
+challenge5_upload.txt
+final_upload.txt
+
+# Server-side uploaded files
+uploads/
