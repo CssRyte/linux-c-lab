@@ -1,0 +1,18 @@
+# Compiled executables
+fcfs
+sjf
+srtf
+priority
+round_robin
+multilevel_queue
+mlfq
+lottery
+cfs
+edf
+simulator
+
+# Build files
+*.o
+
+# Local development backup
+simulator_backup.cpp

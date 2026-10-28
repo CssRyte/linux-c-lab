@@ -1,0 +1,11 @@
+id,arrival,burst,priority
+CPU1,0,15,3
+IO1,1,2,1
+CPU2,2,12,3
+IO2,3,3,1
+CPU3,4,14,4
+IO3,5,2,1
+CPU4,6,11,3
+IO4,7,3,2
+CPU5,8,13,4
+IO5,9,2,1

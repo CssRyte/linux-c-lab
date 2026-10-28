@@ -1,0 +1,25 @@
+Module 4 Assignment 3
+Modular Task Scheduling Simulator
+
+Scheduler: Round Robin
+Time Quantum: 4
+Process	Waiting	Turnaround
+P1	66	78
+P2	63	74
+P3	68	77
+P4	19	22
+P5	22	29
+P6	65	75
+P7	68	78
+P8	73	88
+P9	71	86
+P10	8	11
+
+Average Waiting Time: 52.30
+Average Turnaround Time: 61.80
+CPU Utilization: 100.00%
+Throughput: 0.11 processes/time unit
+
+Gantt Chart:
+| P5 (0-4) | P8 (4-8) | P10 (8-11) | P2 (11-15) | P6 (15-19) | P1 (19-23) | P4 (23-26) | P5 (26-29) | P3 (29-33) | P7 (33-37) | P8 (37-41) | P9 (41-45) | P2 (45-49) | P6 (49-53) | P1 (53-57) | P3 (57-61) | P7 (61-65) | P8 (65-69) | P9 (69-73) | P2 (73-76) | P6 (76-78) | P1 (78-82) | P3 (82-83) | P7 (83-85) | P8 (85-88) | P9 (88-92) | P9 (92-95) |
+Total Time: 95
