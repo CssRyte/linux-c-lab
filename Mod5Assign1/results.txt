@@ -1,0 +1,318 @@
+M5A1 - Random Address Stress Test
+================================
+Total requests: 100
+Target valid-address ratio: 80%
+
+Test 1: Segment=1, Page=3, Offset=802, Access=READ
+Result: SUCCESS | Physical Address: 802
+
+Test 2: Segment=1, Page=2, Offset=394, Access=WRITE
+Result: FAILED
+
+Test 3: Segment=0, Page=1, Offset=247, Access=READ
+Result: SUCCESS | Physical Address: 1247
+
+Test 4: Segment=0, Page=6, Offset=929, Access=READ
+Result: SUCCESS | Physical Address: 2929
+
+Test 5: Segment=0, Page=5, Offset=664, Access=WRITE
+Result: SUCCESS | Physical Address: 3664
+
+Test 6: Segment=0, Page=7, Offset=759, Access=WRITE
+Result: SUCCESS | Physical Address: 4759
+
+Test 7: Segment=5, Page=0, Offset=0, Access=READ
+Result: FAILED
+
+Test 8: Segment=2, Page=2, Offset=304, Access=WRITE
+Result: FAILED
+
+Test 9: Segment=0, Page=3, Offset=455, Access=READ
+Result: SUCCESS | Physical Address: 455
+
+Test 10: Segment=1, Page=2, Offset=447, Access=READ
+Result: SUCCESS | Physical Address: 1447
+
+Test 11: Segment=0, Page=2, Offset=337, Access=WRITE
+Result: SUCCESS | Physical Address: 2337
+
+Test 12: Segment=0, Page=3, Offset=648, Access=READ
+Result: SUCCESS | Physical Address: 648
+
+Test 13: Segment=1, Page=0, Offset=798, Access=READ
+Result: SUCCESS | Physical Address: 3798
+
+Test 14: Segment=1, Page=2, Offset=369, Access=READ
+Result: SUCCESS | Physical Address: 1369
+
+Test 15: Segment=1, Page=2, Offset=430, Access=WRITE
+Result: FAILED
+
+Test 16: Segment=0, Page=0, Offset=520, Access=READ
+Result: SUCCESS | Physical Address: 4520
+
+Test 17: Segment=5, Page=3, Offset=563, Access=WRITE
+Result: FAILED
+
+Test 18: Segment=0, Page=0, Offset=127, Access=READ
+Result: SUCCESS | Physical Address: 4127
+
+Test 19: Segment=1, Page=0, Offset=964, Access=READ
+Result: SUCCESS | Physical Address: 3964
+
+Test 20: Segment=0, Page=4, Offset=879, Access=READ
+Result: SUCCESS | Physical Address: 2879
+
+Test 21: Segment=2, Page=0, Offset=909, Access=READ
+Result: FAILED
+
+Test 22: Segment=0, Page=5, Offset=300, Access=WRITE
+Result: SUCCESS | Physical Address: 300
+
+Test 23: Segment=0, Page=4, Offset=160, Access=READ
+Result: SUCCESS | Physical Address: 2160
+
+Test 24: Segment=1, Page=0, Offset=739, Access=READ
+Result: SUCCESS | Physical Address: 3739
+
+Test 25: Segment=5, Page=3, Offset=449, Access=WRITE
+Result: FAILED
+
+Test 26: Segment=1, Page=3, Offset=706, Access=WRITE
+Result: FAILED
+
+Test 27: Segment=1, Page=1, Offset=306, Access=READ
+Result: SUCCESS | Physical Address: 1306
+
+Test 28: Segment=0, Page=4, Offset=166, Access=READ
+Result: SUCCESS | Physical Address: 2166
+
+Test 29: Segment=3, Page=3, Offset=388, Access=WRITE
+Result: FAILED
+
+Test 30: Segment=1, Page=3, Offset=314, Access=WRITE
+Result: FAILED
+
+Test 31: Segment=1, Page=1, Offset=123, Access=WRITE
+Result: FAILED
+
+Test 32: Segment=0, Page=1, Offset=127, Access=READ
+Result: SUCCESS | Physical Address: 4127
+
+Test 33: Segment=2, Page=0, Offset=15, Access=WRITE
+Result: FAILED
+
+Test 34: Segment=1, Page=1, Offset=579, Access=READ
+Result: SUCCESS | Physical Address: 1579
+
+Test 35: Segment=0, Page=0, Offset=112, Access=WRITE
+Result: SUCCESS | Physical Address: 112
+
+Test 36: Segment=1, Page=2, Offset=845, Access=WRITE
+Result: FAILED
+
+Test 37: Segment=1, Page=2, Offset=423, Access=READ
+Result: SUCCESS | Physical Address: 3423
+
+Test 38: Segment=3, Page=2, Offset=115, Access=WRITE
+Result: FAILED
+
+Test 39: Segment=5, Page=2, Offset=449, Access=READ
+Result: FAILED
+
+Test 40: Segment=0, Page=2, Offset=966, Access=READ
+Result: SUCCESS | Physical Address: 2966
+
+Test 41: Segment=0, Page=5, Offset=327, Access=WRITE
+Result: SUCCESS | Physical Address: 4327
+
+Test 42: Segment=1, Page=1, Offset=98, Access=WRITE
+Result: FAILED
+
+Test 43: Segment=0, Page=3, Offset=63, Access=READ
+Result: SUCCESS | Physical Address: 1063
+
+Test 44: Segment=4, Page=3, Offset=760, Access=WRITE
+Result: FAILED
+
+Test 45: Segment=0, Page=6, Offset=167, Access=READ
+Result: SUCCESS | Physical Address: 167
+
+Test 46: Segment=0, Page=4, Offset=181, Access=WRITE
+Result: SUCCESS | Physical Address: 3181
+
+Test 47: Segment=0, Page=0, Offset=203, Access=READ
+Result: SUCCESS | Physical Address: 2203
+
+Test 48: Segment=0, Page=0, Offset=251, Access=WRITE
+Result: SUCCESS | Physical Address: 2251
+
+Test 49: Segment=0, Page=2, Offset=514, Access=WRITE
+Result: SUCCESS | Physical Address: 4514
+
+Test 50: Segment=1, Page=3, Offset=630, Access=READ
+Result: SUCCESS | Physical Address: 1630
+
+Test 51: Segment=1, Page=1, Offset=641, Access=WRITE
+Result: FAILED
+
+Test 52: Segment=0, Page=1, Offset=830, Access=WRITE
+Result: SUCCESS | Physical Address: 830
+
+Test 53: Segment=1, Page=1, Offset=159, Access=WRITE
+Result: FAILED
+
+Test 54: Segment=1, Page=3, Offset=718, Access=WRITE
+Result: FAILED
+
+Test 55: Segment=3, Page=2, Offset=105, Access=WRITE
+Result: FAILED
+
+Test 56: Segment=1, Page=0, Offset=873, Access=READ
+Result: SUCCESS | Physical Address: 3873
+
+Test 57: Segment=1, Page=3, Offset=533, Access=WRITE
+Result: FAILED
+
+Test 58: Segment=1, Page=0, Offset=488, Access=WRITE
+Result: FAILED
+
+Test 59: Segment=0, Page=7, Offset=254, Access=READ
+Result: SUCCESS | Physical Address: 2254
+
+Test 60: Segment=0, Page=5, Offset=181, Access=READ
+Result: SUCCESS | Physical Address: 4181
+
+Test 61: Segment=1, Page=1, Offset=410, Access=WRITE
+Result: FAILED
+
+Test 62: Segment=0, Page=1, Offset=317, Access=WRITE
+Result: SUCCESS | Physical Address: 317
+
+Test 63: Segment=0, Page=3, Offset=878, Access=READ
+Result: SUCCESS | Physical Address: 1878
+
+Test 64: Segment=0, Page=2, Offset=155, Access=READ
+Result: SUCCESS | Physical Address: 3155
+
+Test 65: Segment=1, Page=0, Offset=673, Access=READ
+Result: SUCCESS | Physical Address: 2673
+
+Test 66: Segment=1, Page=2, Offset=232, Access=WRITE
+Result: FAILED
+
+Test 67: Segment=0, Page=0, Offset=519, Access=WRITE
+Result: SUCCESS | Physical Address: 4519
+
+Test 68: Segment=1, Page=0, Offset=987, Access=READ
+Result: SUCCESS | Physical Address: 2987
+
+Test 69: Segment=0, Page=5, Offset=698, Access=READ
+Result: SUCCESS | Physical Address: 698
+
+Test 70: Segment=0, Page=7, Offset=981, Access=READ
+Result: SUCCESS | Physical Address: 1981
+
+Test 71: Segment=1, Page=3, Offset=906, Access=WRITE
+Result: FAILED
+
+Test 72: Segment=0, Page=0, Offset=264, Access=READ
+Result: SUCCESS | Physical Address: 4264
+
+Test 73: Segment=1, Page=2, Offset=537, Access=READ
+Result: SUCCESS | Physical Address: 3537
+
+Test 74: Segment=0, Page=4, Offset=247, Access=READ
+Result: SUCCESS | Physical Address: 2247
+
+Test 75: Segment=1, Page=2, Offset=211, Access=READ
+Result: SUCCESS | Physical Address: 3211
+
+Test 76: Segment=1, Page=0, Offset=323, Access=WRITE
+Result: FAILED
+
+Test 77: Segment=0, Page=1, Offset=937, Access=WRITE
+Result: SUCCESS | Physical Address: 937
+
+Test 78: Segment=3, Page=1, Offset=632, Access=WRITE
+Result: FAILED
+
+Test 79: Segment=0, Page=4, Offset=286, Access=WRITE
+Result: SUCCESS | Physical Address: 2286
+
+Test 80: Segment=1, Page=3, Offset=341, Access=READ
+Result: SUCCESS | Physical Address: 1341
+
+Test 81: Segment=1, Page=0, Offset=746, Access=WRITE
+Result: FAILED
+
+Test 82: Segment=1, Page=2, Offset=363, Access=READ
+Result: SUCCESS | Physical Address: 3363
+
+Test 83: Segment=0, Page=0, Offset=132, Access=WRITE
+Result: SUCCESS | Physical Address: 4132
+
+Test 84: Segment=1, Page=0, Offset=905, Access=READ
+Result: SUCCESS | Physical Address: 905
+
+Test 85: Segment=0, Page=1, Offset=394, Access=WRITE
+Result: SUCCESS | Physical Address: 2394
+
+Test 86: Segment=0, Page=3, Offset=93, Access=WRITE
+Result: SUCCESS | Physical Address: 1093
+
+Test 87: Segment=5, Page=0, Offset=675, Access=READ
+Result: FAILED
+
+Test 88: Segment=0, Page=1, Offset=672, Access=WRITE
+Result: SUCCESS | Physical Address: 2672
+
+Test 89: Segment=1, Page=2, Offset=783, Access=READ
+Result: SUCCESS | Physical Address: 3783
+
+Test 90: Segment=1, Page=0, Offset=699, Access=WRITE
+Result: FAILED
+
+Test 91: Segment=4, Page=2, Offset=529, Access=READ
+Result: FAILED
+
+Test 92: Segment=1, Page=0, Offset=372, Access=WRITE
+Result: FAILED
+
+Test 93: Segment=4, Page=3, Offset=882, Access=WRITE
+Result: FAILED
+
+Test 94: Segment=0, Page=2, Offset=230, Access=READ
+Result: SUCCESS | Physical Address: 4230
+
+Test 95: Segment=1, Page=3, Offset=386, Access=WRITE
+Result: FAILED
+
+Test 96: Segment=5, Page=1, Offset=779, Access=WRITE
+Result: FAILED
+
+Test 97: Segment=1, Page=0, Offset=336, Access=WRITE
+Result: FAILED
+
+Test 98: Segment=1, Page=3, Offset=594, Access=WRITE
+Result: FAILED
+
+Test 99: Segment=1, Page=0, Offset=36, Access=READ
+Result: SUCCESS | Physical Address: 36
+
+Test 100: Segment=1, Page=2, Offset=654, Access=WRITE
+Result: FAILED
+
+
+========== SUMMARY ==========
+Total requests: 100
+Valid logical addresses generated: 84
+Invalid logical addresses generated: 16
+Successful translations: 61
+Failed translations: 39
+Success rate: 61.00%
+Page faults: 42
+Page fault rate: 42.00%
+Page replacements: 37
+Memory utilization: 100.00%
+Average simulated latency: 42.61

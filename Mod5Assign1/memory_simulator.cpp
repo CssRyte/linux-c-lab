@@ -6,7 +6,9 @@
 #include <limits>
 #include <utility>
 #include <climits>
-
+#include <random>
+#include <fstream>
+#include <iomanip>
 using namespace std;
 
 // Memory protection types
@@ -422,6 +424,180 @@ void printPhysicalMemoryMap() const {
         int getPageFaults() const {
             return page_faults;
         }
+
+
+void runStressTest(int testCount, int validPercent,
+                   int& latency) {
+
+    if (testCount <= 0 || validPercent < 0 ||
+        validPercent > 100 || segments.empty()) {
+        cout << "Invalid stress test configuration.\n";
+        return;
+    }
+
+    ofstream results("results.txt");
+    ofstream errors("errors.log", ios::app);
+
+    if (!results || !errors) {
+        cerr << "Unable to open test output files.\n";
+        return;
+    }
+
+    mt19937 rng(42);
+
+    auto randomInt = [&](int low, int high) {
+        uniform_int_distribution<int> dist(low, high);
+        return dist(rng);
+    };
+
+    int successes = 0;
+    int failures = 0;
+    int validRequests = 0;
+    int invalidRequests = 0;
+
+    int initialFaults = page_faults;
+    int initialReplacements = memory.replacements;
+    int initialLatency = latency;
+
+    results << "M5A1 - Random Address Stress Test\n";
+    results << "================================\n";
+    results << "Total requests: " << testCount << "\n";
+    results << "Target valid-address ratio: "
+            << validPercent << "%\n\n";
+
+    for (int i = 1; i <= testCount; i++) {
+
+        // Decide whether this request should be
+        // within the configured logical address bounds.
+        bool validRequest = randomInt(1, 100) <= validPercent;
+
+        int segNum;
+        int pageNum;
+        int offset;
+
+        if (validRequest) {
+            validRequests++;
+
+            segNum = randomInt(
+                0, static_cast<int>(segments.size()) - 1
+            );
+
+            int limit = segments[segNum].limit;
+
+            // Choose a byte within the segment.
+            int logicalByte = randomInt(0, limit - 1);
+
+            pageNum = logicalByte / page_size;
+            offset = logicalByte % page_size;
+
+        } else {
+            invalidRequests++;
+
+            // An out-of-range segment guarantees
+            // an invalid logical address.
+            segNum = static_cast<int>(segments.size())
+                     + randomInt(0, 3);
+
+            pageNum = randomInt(0, 3);
+            offset = randomInt(0, page_size - 1);
+        }
+
+        Protection accessType =
+            randomInt(0, 1) == 0
+                ? READ_ONLY
+                : READ_WRITE;
+
+        results << "Test " << i
+                << ": Segment=" << segNum
+                << ", Page=" << pageNum
+                << ", Offset=" << offset
+                << ", Access="
+                << (accessType == READ_ONLY
+                    ? "READ" : "WRITE")
+                << "\n";
+
+        int address = translateAddress(
+            segNum, pageNum, offset, accessType, latency
+        );
+
+        if (address != -1) {
+            successes++;
+
+            results << "Result: SUCCESS"
+                    << " | Physical Address: "
+                    << address << "\n\n";
+
+        } else {
+            failures++;
+
+            results << "Result: FAILED\n\n";
+
+            errors << "Stress Test " << i
+                   << " | Segment=" << segNum
+                   << " | Page=" << pageNum
+                   << " | Offset=" << offset
+                   << " | Access="
+                   << (accessType == READ_ONLY
+                       ? "READ" : "WRITE")
+                   << " | Translation failed\n";
+        }
+    }
+
+    int newFaults = page_faults - initialFaults;
+    int newReplacements =
+        memory.replacements - initialReplacements;
+    int latencyUsed = latency - initialLatency;
+
+    double faultRate =
+        100.0 * newFaults / testCount;
+
+    double successRate =
+        100.0 * successes / testCount;
+
+    double averageLatency =
+        static_cast<double>(latencyUsed) / testCount;
+
+    results << fixed << setprecision(2);
+
+    results << "\n========== SUMMARY ==========\n";
+    results << "Total requests: " << testCount << "\n";
+    results << "Valid logical addresses generated: "
+            << validRequests << "\n";
+    results << "Invalid logical addresses generated: "
+            << invalidRequests << "\n";
+    results << "Successful translations: "
+            << successes << "\n";
+    results << "Failed translations: "
+            << failures << "\n";
+    results << "Success rate: " << successRate << "%\n";
+    results << "Page faults: " << newFaults << "\n";
+    results << "Page fault rate: " << faultRate << "%\n";
+    results << "Page replacements: "
+            << newReplacements << "\n";
+    results << "Memory utilization: "
+            << memory.utilization() << "%\n";
+    results << "Average simulated latency: "
+            << averageLatency << "\n";
+
+    cout << fixed << setprecision(2);
+    cout << "\n========== STRESS TEST SUMMARY ==========\n";
+    cout << "Total requests: " << testCount << "\n";
+    cout << "Successful translations: " << successes << "\n";
+    cout << "Failed translations: " << failures << "\n";
+    cout << "Success rate: " << successRate << "%\n";
+    cout << "Page faults: " << newFaults << "\n";
+    cout << "Page fault rate: " << faultRate << "%\n";
+    cout << "Page replacements: "
+         << newReplacements << "\n";
+    cout << "Memory utilization: "
+         << memory.utilization() << "%\n";
+    cout << "Average simulated latency: "
+         << averageLatency << "\n";
+
+    cout << "\nResults saved to results.txt\n";
+    cout << "Failures logged to errors.log\n";
+}
+
  };
 
 
@@ -503,13 +679,12 @@ int main() {
     int choice = 0;
 
     do {
-        cout << "\n========== MAIN MENU ==========\n";
         cout << "1. Translate Address\n";
         cout << "2. Display Page Directories\n";
         cout << "3. Display Physical Memory Map\n";
         cout << "4. Display Statistics\n";
-        cout << "5. Exit\n";
-        cout << "Choice: ";
+        cout << "5. Run Random Stress Test\n";
+        cout << "6. Exit\n";
 
         if (!(cin >> choice)) {
             cerr << "Invalid menu input.\n";
@@ -582,15 +757,30 @@ int main() {
                  << latency << "\n";
             break;
 
-        case 5:
-            cout << "Exiting simulator.\n";
-            break;
+        case 5: {
+    int validPercent;
 
+    cout << "Enter valid address percentage (0-100): ";
+    cin >> validPercent;
+
+    if (!cin || validPercent < 0 || validPercent > 100) {
+        cout << "Invalid percentage.\n";
+        if (!cin) return 1;
+        break;
+    }
+
+    segments.runStressTest(100, validPercent, latency);
+    break;
+}
+
+case 6:
+    cout << "Exiting simulator.\n";
+    break;
         default:
             cout << "Invalid menu option.\n";
         }
 
-    } while (choice != 5);
+    } while (choice != 6);
 
     return 0;
 }
