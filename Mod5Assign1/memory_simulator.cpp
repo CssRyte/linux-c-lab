@@ -266,6 +266,7 @@ class SegmentTable {
         vector<Segment> segments;
         vector<PageTable> page_tables;
         PhysicalMemory& memory;
+        vector<string> translationTimeline;
 
         // Tracks the segment and page occupying each frame.
         vector<pair<int, int>> frame_owners;
@@ -274,6 +275,56 @@ class SegmentTable {
         int page_faults = 0;
 
     public:
+
+
+    void logError(const string& message) {
+
+        ofstream log("errors.log", ios::app);
+
+        if (!log.is_open()) {
+            cerr << "Error: Unable to open errors.log\n";
+            return;
+        }
+
+        log << message << "\n";
+        log.close();
+    }
+
+void recordTranslation(int segNum, int pageNum,
+                       int offset, int physicalAddress) {
+
+    string entry = "Time " +
+        to_string(translationTimeline.size() + 1);
+
+    entry += " | Segment " + to_string(segNum);
+    entry += " | Page " + to_string(pageNum);
+    entry += " | Offset " + to_string(offset);
+
+    if (physicalAddress == -1) {
+        entry += " | FAILED";
+    } else {
+        entry += " | Physical Address " +
+                 to_string(physicalAddress);
+    }
+
+    translationTimeline.push_back(entry);
+}
+
+void printTranslationTimeline() const {
+
+    cout << "\n===== ADDRESS TRANSLATION TIMELINE =====\n";
+
+    if (translationTimeline.empty()) {
+        cout << "No translations recorded.\n";
+        return;
+    }
+
+    for (const string& entry : translationTimeline) {
+        cout << entry << "\n";
+    }
+
+    cout << "========================================\n";
+}
 
 void printPhysicalMemoryMap() const {
 
@@ -354,88 +405,176 @@ void addSegment(int limit, Protection protection) {
 }
 
 
-        int translateAddress(int segNum, int pageNum,
-                            int offset, Protection accessType,
-                            int& latency) {
+       
+int translateAddress(int segNum, int pageNum,
+                     int offset, Protection accessType,
+                     int& latency) {
 
-            // Validate segment number.
-            if (segNum < 0 ||
-                segNum >= static_cast<int>(segments.size())) {
-                cout << "Invalid segment number.\n";
-                return -1;
-            }
+    // Helper: record and log failed translations.
+    auto fail = [&](const string& reason) -> int {
 
-            Segment& segment = segments[segNum];
+        cout << reason << "\n";
 
-            // Validate page and offset.
-            if (pageNum < 0 || offset < 0 ||
-                offset >= page_size ||
-                1LL * pageNum * page_size + offset >= segment.limit) {
-                cout << "Invalid logical address.\n";
-                return -1;
-            }
+        logError(
+            reason +
+            " | Segment=" + to_string(segNum) +
+            " | Page=" + to_string(pageNum) +
+            " | Offset=" + to_string(offset) +
+            " | Access=" +
+            string(accessType == READ_ONLY ? "READ" : "WRITE")
+        );
 
-            // Check segment-level access permissions.
-            if (accessType == READ_WRITE &&
-                segment.protection == READ_ONLY) {
-                cout << "Segment protection violation.\n";
-                return -1;
-            }
+        recordTranslation(segNum, pageNum, offset, -1);
 
-            PageTable& table = page_tables[segNum];
-            Page& page = table.getPage(pageNum);
+        return -1;
+    };
 
-            // Check page-level access permissions.
-            if (page.present &&
-                accessType == READ_WRITE &&
-                page.protection == READ_ONLY) {
-                cout << "Page protection violation.\n";
-                return -1;
-            }
+    // =========================================
+    // STEP 1: VALIDATE SEGMENT
+    // =========================================
 
-            if (!page.present) {
-                cout << "Page fault detected.\n";
-                page_faults++;
-                latency += 100;
+    if (segNum < 0 ||
+        segNum >= static_cast<int>(segments.size())) {
 
-                int frame = memory.allocateFrame();
+        return fail("Segmentation Fault: Invalid segment");
+    }
 
-                if (frame == -1) {
-                    cout << "Address translation failed: no frames.\n";
-                    return -1;
-                }
-                // Invalidate any previous owner of this frame.
-                auto [oldSegment, oldPage] = frame_owners[frame];
+    Segment& segment = segments[segNum];
 
-                if (oldSegment != -1) {
-                    Page& evicted = page_tables[oldSegment].getPage(oldPage);
+    // =========================================
+    // STEP 2: VALIDATE PAGE AND OFFSET
+    // =========================================
 
-                    evicted.present = false;
-                    evicted.frame_number = -1;
-                }
+    if (pageNum < 0 ||
+        pageNum >= page_tables[segNum].num_pages ||
+        offset < 0 ||
+        offset >= page_size ||
+        1LL * pageNum * page_size + offset >= segment.limit) {
 
-                table.setFrame(pageNum, frame, page.protection);
-                frame_owners[frame] = {segNum, pageNum};
-            }
+        return fail("Invalid Address: Page or offset out of bounds");
+    }
 
-            latency += 1;
+    // =========================================
+    // STEP 3: CHECK SEGMENT PROTECTION
+    // =========================================
 
-        int frame = table.getFrameNumber(pageNum, accessType);
+    if (accessType == READ_WRITE &&
+        segment.protection == READ_ONLY) {
 
-            if (frame == -1) {
-                return -1;
-            }
+        return fail("Protection Violation: Segment is read-only");
+    }
 
-            // Update usage timestamp for LRU
-            memory.accessFrame(frame);
+    PageTable& table = page_tables[segNum];
+    Page& page = table.getPage(pageNum);
 
-            int physicalAddress = frame * page_size + offset;
+    // =========================================
+    // STEP 4: CHECK PAGE PROTECTION
+    // =========================================
 
-            cout << "Physical address: "
-                << physicalAddress << "\n";
+    if (accessType == READ_WRITE &&
+        page.protection == READ_ONLY) {
 
-            return physicalAddress;
+        return fail("Protection Violation: Page is read-only");
+    }
+
+    // =========================================
+    // STEP 5: HANDLE PAGE FAULT
+    // =========================================
+
+    if (!page.present) {
+
+        cout << "Page fault detected.\n";
+
+        page_faults++;
+
+        // Simulated page fault penalty.
+        latency += 100;
+
+        int frame = memory.allocateFrame();
+
+        if (frame == -1) {
+            return fail(
+                "Memory Error: No physical frame available"
+            );
         }
+
+        // Determine whether the selected frame
+        // previously belonged to another page.
+        auto [oldSegment, oldPage] = frame_owners[frame];
+
+        if (oldSegment != -1 && oldPage != -1) {
+
+            Page& evicted =
+                page_tables[oldSegment].getPage(oldPage);
+
+            evicted.present = false;
+            evicted.frame_number = -1;
+
+            cout << "Evicted Segment "
+                 << oldSegment
+                 << ", Page " << oldPage << "\n";
+        }
+
+        // Load the requested page into the frame.
+        // Preserve the page's existing protection.
+        table.setFrame(
+            pageNum,
+            frame,
+            page.protection
+        );
+
+        frame_owners[frame] = {segNum, pageNum};
+    }
+
+    // =========================================
+    // STEP 6: ACCESS PHYSICAL FRAME
+    // =========================================
+
+    int frame = table.getFrameNumber(
+        pageNum, accessType
+    );
+
+    if (frame == -1) {
+        return fail(
+            "Translation Error: Unable to obtain frame"
+        );
+    }
+
+    // Update last-used timestamp for LRU.
+    memory.accessFrame(frame);
+
+    // Normal simulated translation cost.
+    latency += 1;
+
+    // =========================================
+    // STEP 7: COMPUTE PHYSICAL ADDRESS
+    // =========================================
+
+    long long physicalAddress =
+        1LL * frame * page_size + offset;
+
+    if (physicalAddress > INT_MAX) {
+        return fail(
+            "Address Overflow: Physical address too large"
+        );
+    }
+
+    cout << "Physical address: "
+         << physicalAddress << "\n";
+
+    // =========================================
+    // STEP 8: RECORD SUCCESSFUL TRANSLATION
+    // =========================================
+
+    recordTranslation(
+        segNum,
+        pageNum,
+        offset,
+        static_cast<int>(physicalAddress)
+    );
+
+    return static_cast<int>(physicalAddress);
+}
 
         int getPageFaults() const {
             return page_faults;
@@ -684,6 +823,7 @@ int getValidatedInput(const string& prompt, int minimum, int maximum) {
 
 
 
+
 int main() {
 
     cout << "=========================================\n";
@@ -701,6 +841,22 @@ int main() {
     int pageSize = getValidatedInput(
         "Enter page size (bytes): ", 1, 1000000
     );
+
+    // Ensure physical addresses fit in int.
+    while (1LL * numFrames * pageSize > INT_MAX) {
+        cout << "Error: Physical memory size exceeds "
+             << "the supported address range.\n";
+
+        numFrames = getValidatedInput(
+            "Enter number of physical frames: ",
+            1, 10000
+        );
+
+        pageSize = getValidatedInput(
+            "Enter page size (bytes): ",
+            1, 1000000
+        );
+    }
 
     int numSegments = getValidatedInput(
         "Enter number of segments: ", 1, 100
@@ -772,10 +928,11 @@ int main() {
         cout << "4. Display Statistics\n";
         cout << "5. Run Random Stress Test\n";
         cout << "6. Configure Page Protection\n";
-        cout << "7. Exit\n";
+        cout << "7. Display Translation Timeline\n";
+        cout << "8. Exit\n";
 
         choice = getValidatedInput(
-            "Choice: ", 1, 7
+            "Choice: ", 1, 8
         );
 
         switch (choice) {
@@ -837,7 +994,6 @@ int main() {
         // =====================================
 
         case 2:
-
             segments.printPageDirectories();
             break;
 
@@ -846,7 +1002,6 @@ int main() {
         // =====================================
 
         case 3:
-
             segments.printPhysicalMemoryMap();
             break;
 
@@ -854,7 +1009,7 @@ int main() {
         // OPTION 4: STATISTICS
         // =====================================
 
-        case 4:
+        case 4: {
 
             cout << "\n========== STATISTICS ==========\n";
 
@@ -873,9 +1028,10 @@ int main() {
             cout << "================================\n";
 
             break;
+        }
 
         // =====================================
-        // OPTION 5: AUTOMATED STRESS TEST
+        // OPTION 5: RANDOM STRESS TEST
         // =====================================
 
         case 5: {
@@ -888,9 +1044,7 @@ int main() {
             );
 
             segments.runStressTest(
-                100,
-                validPercent,
-                latency
+                100, validPercent, latency
             );
 
             break;
@@ -942,16 +1096,30 @@ int main() {
         }
 
         // =====================================
-        // OPTION 7: EXIT
+        // OPTION 7: TRANSLATION TIMELINE
         // =====================================
 
-        case 7:
+        case 7: {
 
-            cout << "\nExiting M5A1 Memory Simulator.\n";
+            segments.printTranslationTimeline();
+
             break;
         }
 
-    } while (choice != 7);
+        // =====================================
+        // OPTION 8: EXIT
+        // =====================================
+
+        case 8: {
+
+            cout << "\nExiting M5A1 Memory Simulator.\n";
+
+            break;
+        }
+
+        }
+
+    } while (choice != 8);
 
     return 0;
 }
