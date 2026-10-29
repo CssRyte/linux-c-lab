@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <limits>
 #include <utility>
+#include <climits>
+
 using namespace std;
 
 // Memory protection types
@@ -30,24 +32,47 @@ struct Segment {
 
 // Page table for a segment
 
+
 class PageTable {
 public:
-    vector<Page> pages;
+    static constexpr int ENTRIES_PER_TABLE = 4;
+    // Each entry in this directory is a second-level page table.
+    vector<vector<Page>> directory;
+
     int page_size;
+    int num_pages;
 
     PageTable(int numPages, int size)
-        : pages(numPages), page_size(size) {}
+        : page_size(size), num_pages(numPages) {
 
-    // Find a page's frame and check access permissions.
-    // Returns -1 if the page is missing or access is denied.
+        int tableCount =
+            (numPages + ENTRIES_PER_TABLE - 1)
+            / ENTRIES_PER_TABLE;
+
+        for (int i = 0; i < tableCount; i++) {
+            int remaining = numPages - i * ENTRIES_PER_TABLE;
+            int entries = min(ENTRIES_PER_TABLE, remaining);
+
+            directory.emplace_back(entries);
+        }
+    }
+
+    // Locate a page through the two-level directory.
+    Page& getPage(int pageNum) {
+        int directoryIndex = pageNum / ENTRIES_PER_TABLE;
+        int tableIndex = pageNum % ENTRIES_PER_TABLE;
+
+        return directory.at(directoryIndex).at(tableIndex);
+    }
+
     int getFrameNumber(int pageNum, Protection accessType) {
 
-        if (pageNum < 0 || pageNum >= static_cast<int>(pages.size())) {
+        if (pageNum < 0 || pageNum >= num_pages) {
             cout << "Invalid page number.\n";
             return -1;
         }
 
-        Page& page = pages[pageNum];
+        Page& page = getPage(pageNum);
 
         if (!page.present) {
             cout << "Page Fault: Page " << pageNum
@@ -57,27 +82,52 @@ public:
 
         if (accessType == READ_WRITE &&
             page.protection == READ_ONLY) {
-            cout << "Protection Violation: Cannot write to read-only page.\n";
+            cout << "Protection Violation.\n";
             return -1;
         }
 
         page.last_access++;
-
         return page.frame_number;
     }
 
-    // Map a page to a physical frame.
-    void setFrame(int pageNum, int frame, Protection protection) {
+    void setFrame(int pageNum, int frame,
+                  Protection protection) {
 
-        if (pageNum < 0 || pageNum >= static_cast<int>(pages.size())) {
+        if (pageNum < 0 || pageNum >= num_pages) {
             cout << "Invalid page number.\n";
             return;
         }
 
-        pages[pageNum].frame_number = frame;
-        pages[pageNum].present = true;
-        pages[pageNum].protection = protection;
-        pages[pageNum].last_access = 0;
+        Page& page = getPage(pageNum);
+
+        page.frame_number = frame;
+        page.present = true;
+        page.protection = protection;
+        page.last_access = 0;
+    }
+
+    void printDirectory() {
+
+        cout << "\n===== Two-Level Page Directory =====\n";
+
+        for (int i = 0; i < static_cast<int>(directory.size()); i++) {
+
+            cout << "\nDirectory Entry " << i << ":\n";
+
+            for (int j = 0;
+                 j < static_cast<int>(directory[i].size());
+                 j++) {
+
+                Page& page = directory[i][j];
+
+                int logicalPage = i * ENTRIES_PER_TABLE + j;
+
+                cout << "  Page " << logicalPage
+                     << " -> Frame " << page.frame_number
+                     << " | Present: " << page.present
+                     << "\n";
+            }
+        }
     }
 };
 
@@ -213,168 +263,334 @@ public:
 
 
 class SegmentTable {
-private:
-    vector<Segment> segments;
-    vector<PageTable> page_tables;
-    PhysicalMemory& memory;
+    private:
+        vector<Segment> segments;
+        vector<PageTable> page_tables;
+        PhysicalMemory& memory;
 
-    // Tracks the segment and page occupying each frame.
-    vector<pair<int, int>> frame_owners;
+        // Tracks the segment and page occupying each frame.
+        vector<pair<int, int>> frame_owners;
 
-    int page_size;
-    int page_faults = 0;
+        int page_size;
+        int page_faults = 0;
 
-public:
-    SegmentTable(PhysicalMemory& mem, int size)
-        : memory(mem),
-          frame_owners(mem.num_frames, {-1, -1}),
-          page_size(size) {}
+    public:
 
-    void addSegment(int limit, Protection protection) {
-        int numPages = (limit + page_size - 1) / page_size;
+void printPhysicalMemoryMap() const {
 
-        segments.push_back({0, limit, protection});
-        page_tables.emplace_back(numPages, page_size);
+    cout << "\n========== PHYSICAL MEMORY MAP ==========\n";
 
-        cout << "Created segment "
-             << segments.size() - 1
-             << " with " << numPages << " pages.\n";
+    for (int frame = 0; frame < memory.num_frames; frame++) {
+
+        cout << "Frame " << frame << ": ";
+
+        if (memory.free_frames[frame]) {
+            cout << "[FREE]\n";
+            continue;
+        }
+
+        auto [segNum, pageNum] = frame_owners[frame];
+
+        if (segNum == -1 || pageNum == -1) {
+            cout << "[OCCUPIED - OWNER UNKNOWN]\n";
+        } else {
+            cout << "Segment " << segNum
+                 << " | Page " << pageNum << "\n";
+        }
     }
 
-    int translateAddress(int segNum, int pageNum,
-                         int offset, Protection accessType,
-                         int& latency) {
+    cout << "-----------------------------------------\n";
+    cout << "Memory utilization: "
+         << memory.utilization() << "%\n";
 
-        // Validate segment number.
-        if (segNum < 0 ||
-            segNum >= static_cast<int>(segments.size())) {
-            cout << "Invalid segment number.\n";
-            return -1;
+    cout << "Page faults: " << page_faults << "\n";
+    cout << "Page replacements: "
+         << memory.replacements << "\n";
+
+    cout << "=========================================\n";
+}
+
+        void printPageDirectories() {
+
+    for (int i = 0;
+         i < static_cast<int>(page_tables.size());
+         i++) {
+
+        cout << "\nSegment " << i << ":\n";
+        page_tables[i].printDirectory();
+    }
+}
+        SegmentTable(PhysicalMemory& mem, int size)
+            : memory(mem),
+            frame_owners(mem.num_frames, {-1, -1}),
+            page_size(size) {}
+
+        void addSegment(int limit, Protection protection) {
+            int numPages = (limit + page_size - 1) / page_size;
+
+            segments.push_back({0, limit, protection});
+            page_tables.emplace_back(numPages, page_size);
+
+            cout << "Created segment "
+                << segments.size() - 1
+                << " with " << numPages << " pages.\n";
         }
 
-        Segment& segment = segments[segNum];
+        int translateAddress(int segNum, int pageNum,
+                            int offset, Protection accessType,
+                            int& latency) {
 
-        // Validate page and offset.
-        if (pageNum < 0 || offset < 0 ||
-            offset >= page_size ||
-            1LL * pageNum * page_size + offset >= segment.limit) {
-            cout << "Invalid logical address.\n";
-            return -1;
-        }
-
-        // Check segment-level access permissions.
-        if (accessType == READ_WRITE &&
-            segment.protection == READ_ONLY) {
-            cout << "Segment protection violation.\n";
-            return -1;
-        }
-
-        PageTable& table = page_tables[segNum];
-        Page& page = table.pages[pageNum];
-
-        // Check page-level access permissions.
-        if (page.present &&
-            accessType == READ_WRITE &&
-            page.protection == READ_ONLY) {
-            cout << "Page protection violation.\n";
-            return -1;
-        }
-
-        if (!page.present) {
-            cout << "Page fault detected.\n";
-            page_faults++;
-            latency += 100;
-
-            int frame = memory.allocateFrame();
-
-            if (frame == -1) {
-                cout << "Address translation failed: no frames.\n";
+            // Validate segment number.
+            if (segNum < 0 ||
+                segNum >= static_cast<int>(segments.size())) {
+                cout << "Invalid segment number.\n";
                 return -1;
             }
-            // Invalidate any previous owner of this frame.
-            auto [oldSegment, oldPage] = frame_owners[frame];
 
-            if (oldSegment != -1) {
-                Page& evicted =
-                    page_tables[oldSegment].pages[oldPage];
+            Segment& segment = segments[segNum];
 
-                evicted.present = false;
-                evicted.frame_number = -1;
+            // Validate page and offset.
+            if (pageNum < 0 || offset < 0 ||
+                offset >= page_size ||
+                1LL * pageNum * page_size + offset >= segment.limit) {
+                cout << "Invalid logical address.\n";
+                return -1;
             }
 
-            table.setFrame(pageNum, frame, segment.protection);
-            frame_owners[frame] = {segNum, pageNum};
+            // Check segment-level access permissions.
+            if (accessType == READ_WRITE &&
+                segment.protection == READ_ONLY) {
+                cout << "Segment protection violation.\n";
+                return -1;
+            }
+
+            PageTable& table = page_tables[segNum];
+            Page& page = table.getPage(pageNum);
+
+            // Check page-level access permissions.
+            if (page.present &&
+                accessType == READ_WRITE &&
+                page.protection == READ_ONLY) {
+                cout << "Page protection violation.\n";
+                return -1;
+            }
+
+            if (!page.present) {
+                cout << "Page fault detected.\n";
+                page_faults++;
+                latency += 100;
+
+                int frame = memory.allocateFrame();
+
+                if (frame == -1) {
+                    cout << "Address translation failed: no frames.\n";
+                    return -1;
+                }
+                // Invalidate any previous owner of this frame.
+                auto [oldSegment, oldPage] = frame_owners[frame];
+
+                if (oldSegment != -1) {
+                    Page& evicted = page_tables[oldSegment].getPage(oldPage);
+
+                    evicted.present = false;
+                    evicted.frame_number = -1;
+                }
+
+                table.setFrame(pageNum, frame, segment.protection);
+                frame_owners[frame] = {segNum, pageNum};
+            }
+
+            latency += 1;
+
+        int frame = table.getFrameNumber(pageNum, accessType);
+
+            if (frame == -1) {
+                return -1;
+            }
+
+            // Update usage timestamp for LRU
+            memory.accessFrame(frame);
+
+            int physicalAddress = frame * page_size + offset;
+
+            cout << "Physical address: "
+                << physicalAddress << "\n";
+
+            return physicalAddress;
         }
 
-        latency += 1;
-
-       int frame = table.getFrameNumber(pageNum, accessType);
-
-        if (frame == -1) {
-            return -1;
+        int getPageFaults() const {
+            return page_faults;
         }
+ };
 
-        // Update usage timestamp for LRU
-        memory.accessFrame(frame);
 
-        int physicalAddress = frame * page_size + offset;
-
-        cout << "Physical address: "
-             << physicalAddress << "\n";
-
-        return physicalAddress;
-    }
-
-    int getPageFaults() const {
-        return page_faults;
-    }
-};
 
 
 
 
 int main() {
-    cout << "M5A1 - FIFO vs LRU Test\n";
 
-    vector<int> requests = {0, 1, 2, 0, 3};
+    cout << "=====================================\n";
+    cout << " M5A1 Advanced Memory Simulator\n";
+    cout << "=====================================\n";
 
-    for (int mode = 0; mode < 2; mode++) {
+    int numFrames, pageSize, numSegments;
+    int policyChoice;
 
-        PhysicalMemory::ReplacementPolicy policy =
-            mode == 0 ? PhysicalMemory::FIFO
-                      : PhysicalMemory::LRU;
+    cout << "Enter number of physical frames: ";
+    cin >> numFrames;
 
-        cout << "\n========================\n";
-        cout << (mode == 0 ? "Testing FIFO" : "Testing LRU");
-        cout << "\n========================\n";
+    cout << "Enter page size (bytes): ";
+    cin >> pageSize;
 
-        PhysicalMemory memory(3, policy);
-        SegmentTable segments(memory, 1000);
+    cout << "Enter number of segments: ";
+    cin >> numSegments;
 
-        segments.addSegment(4000, READ_WRITE);
+    if (!cin || numFrames <= 0 || pageSize <= 0 ||
+        numSegments <= 0) {
+        cerr << "Invalid memory configuration.\n";
+        return 1;
+    }
 
-        int latency = 0;
+    cout << "\nChoose replacement algorithm:\n";
+    cout << "1. FIFO\n";
+    cout << "2. LRU\n";
+    cout << "Choice: ";
+    cin >> policyChoice;
 
-        for (int page : requests) {
-            cout << "\nRequesting page " << page << "\n";
+    if (!cin || (policyChoice != 1 && policyChoice != 2)) {
+        cerr << "Invalid replacement policy.\n";
+        return 1;
+    }
 
-            segments.translateAddress(
-                0, page, 0, READ_ONLY, latency
-            );
+    PhysicalMemory::ReplacementPolicy policy =
+        (policyChoice == 1)
+        ? PhysicalMemory::FIFO
+        : PhysicalMemory::LRU;
+
+    PhysicalMemory memory(numFrames, policy);
+    SegmentTable segments(memory, pageSize);
+
+    // Configure each segment.
+    for (int i = 0; i < numSegments; i++) {
+
+        int segmentSize, protectionChoice;
+
+        cout << "\nSegment " << i << " configuration\n";
+
+        cout << "Enter segment size (bytes): ";
+        cin >> segmentSize;
+
+        cout << "Protection (1=Read Only, 2=Read/Write): ";
+        cin >> protectionChoice;
+
+        if (!cin || segmentSize <= 0 ||
+            (protectionChoice != 1 && protectionChoice != 2)) {
+            cerr << "Invalid segment configuration.\n";
+            return 1;
         }
 
-        cout << "\nPage faults: "
-             << segments.getPageFaults() << "\n";
+        Protection prot =
+            (protectionChoice == 1)
+            ? READ_ONLY
+            : READ_WRITE;
 
-        cout << "Replacements: "
-             << memory.replacements << "\n";
-
-        cout << "Utilization: "
-             << memory.utilization() << "%\n";
-
-        cout << "Simulated latency: "
-             << latency << "\n";
+        segments.addSegment(segmentSize, prot);
     }
+
+    int latency = 0;
+    int choice = 0;
+
+    do {
+        cout << "\n========== MAIN MENU ==========\n";
+        cout << "1. Translate Address\n";
+        cout << "2. Display Page Directories\n";
+        cout << "3. Display Physical Memory Map\n";
+        cout << "4. Display Statistics\n";
+        cout << "5. Exit\n";
+        cout << "Choice: ";
+
+        if (!(cin >> choice)) {
+            cerr << "Invalid menu input.\n";
+            return 1;
+        }
+
+        switch (choice) {
+
+        case 1: {
+            int segNum, pageNum, offset, accessChoice;
+
+            cout << "Segment number: ";
+            cin >> segNum;
+
+            cout << "Page number: ";
+            cin >> pageNum;
+
+            cout << "Offset: ";
+            cin >> offset;
+
+            cout << "Access (1=Read, 2=Write): ";
+            cin >> accessChoice;
+
+            if (!cin ||
+                (accessChoice != 1 && accessChoice != 2)) {
+                cout << "Invalid access type.\n";
+                if (!cin) return 1;
+                break;
+            }
+
+            Protection accessType =
+                (accessChoice == 1)
+                ? READ_ONLY
+                : READ_WRITE;
+
+            int address = segments.translateAddress(
+                segNum, pageNum, offset, accessType, latency
+            );
+
+            if (address == -1) {
+                cout << "Translation failed.\n";
+            } else {
+                cout << "Translation successful: "
+                     << address << "\n";
+            }
+
+            break;
+        }
+
+        case 2:
+            segments.printPageDirectories();
+            break;
+
+        case 3:
+            segments.printPhysicalMemoryMap();
+            break;
+
+        case 4:
+            cout << "\n===== STATISTICS =====\n";
+            cout << "Page faults: "
+                 << segments.getPageFaults() << "\n";
+
+            cout << "Replacements: "
+                 << memory.replacements << "\n";
+
+            cout << "Memory utilization: "
+                 << memory.utilization() << "%\n";
+
+            cout << "Simulated latency: "
+                 << latency << "\n";
+            break;
+
+        case 5:
+            cout << "Exiting simulator.\n";
+            break;
+
+        default:
+            cout << "Invalid menu option.\n";
+        }
+
+    } while (choice != 5);
 
     return 0;
 }
