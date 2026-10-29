@@ -3,6 +3,7 @@
 #include <queue>
 #include <string>
 #include <algorithm>
+#include <limits>
 #include <utility>
 using namespace std;
 
@@ -81,96 +82,129 @@ public:
 };
 
 
+
 class PhysicalMemory {
 public:
+    enum ReplacementPolicy {
+        FIFO,
+        LRU
+    };
+
     int num_frames;
-
-    // Whether each physical frame is occupied
     vector<bool> free_frames;
-
-    // Order in which frames were allocated
     queue<int> fifo_queue;
 
-    // Total number of replacements
+    vector<long long> last_used;
+    long long clock = 0;
+
+    ReplacementPolicy policy;
     int replacements = 0;
 
-    PhysicalMemory(int frames)
+    PhysicalMemory(int frames, ReplacementPolicy mode = FIFO)
         : num_frames(frames),
-          free_frames(frames, true) {}
+          free_frames(frames, true),
+          last_used(frames, 0),
+          policy(mode) {}
 
-    // Allocate a physical frame using FIFO
+    // Record an access to a physical frame.
+    void accessFrame(int frame) {
+        if (frame >= 0 && frame < num_frames &&
+            !free_frames[frame]) {
+            last_used[frame] = ++clock;
+        }
+    }
+
     int allocateFrame() {
 
-        // Step 1: Search for an empty frame
+        // First, look for an unoccupied frame.
         for (int i = 0; i < num_frames; i++) {
-
             if (free_frames[i]) {
-
                 free_frames[i] = false;
-
                 fifo_queue.push(i);
+                accessFrame(i);
 
                 cout << "Allocated free frame: "
                      << i << "\n";
-
                 return i;
             }
         }
 
-        // Step 2: Memory is full; replace oldest frame
-        int frame = fifo_queue.front();
-        fifo_queue.pop();
-
-        // Step 3: Put reused frame at the back
-        fifo_queue.push(frame);
-
-        replacements++;
-
-        cout << "FIFO Replacement: Frame "
-             << frame << " reused.\n";
-
-        return frame;
-    }
-
-    // Free a physical frame
-    void freeFrame(int frame) {
-
-        if (frame < 0 || frame >= num_frames) {
-            cout << "Invalid frame.\n";
-            return;
+        if (num_frames == 0) {
+            cout << "No physical frames available.\n";
+            return -1;
         }
 
-        free_frames[frame] = true;
+        int victim = -1;
 
-        // Remove freed frame from FIFO queue
+        if (policy == FIFO) {
+            victim = fifo_queue.front();
+            fifo_queue.pop();
+
+            cout << "FIFO Replacement: ";
+        } else {
+            // Select the least recently accessed frame.
+            long long oldest = LLONG_MAX;
+
+            for (int i = 0; i < num_frames; i++) {
+                if (last_used[i] < oldest) {
+                    oldest = last_used[i];
+                    victim = i;
+                }
+            }
+
+            // Keep queue consistent for possible mode changes.
+            queue<int> updated;
+
+            while (!fifo_queue.empty()) {
+                int current = fifo_queue.front();
+                fifo_queue.pop();
+
+                if (current != victim)
+                    updated.push(current);
+            }
+
+            fifo_queue = updated;
+
+            cout << "LRU Replacement: ";
+        }
+
+        replacements++;
+        fifo_queue.push(victim);
+        accessFrame(victim);
+
+        cout << "Frame " << victim << " reused.\n";
+        return victim;
+    }
+
+    void freeFrame(int frame) {
+        if (frame < 0 || frame >= num_frames)
+            return;
+
+        free_frames[frame] = true;
+        last_used[frame] = 0;
+
         queue<int> updated;
 
         while (!fifo_queue.empty()) {
-
             int current = fifo_queue.front();
             fifo_queue.pop();
 
-            if (current != frame) {
+            if (current != frame)
                 updated.push(current);
-            }
         }
 
         fifo_queue = updated;
     }
 
-    // Percentage of occupied frames
     double utilization() const {
+        if (num_frames == 0)
+            return 0.0;
 
         int used = 0;
 
         for (bool isFree : free_frames) {
-            if (!isFree) {
+            if (!isFree)
                 used++;
-            }
-        }
-
-        if (num_frames == 0) {
-            return 0.0;
         }
 
         return 100.0 * used / num_frames;
@@ -253,6 +287,10 @@ public:
 
             int frame = memory.allocateFrame();
 
+            if (frame == -1) {
+                cout << "Address translation failed: no frames.\n";
+                return -1;
+            }
             // Invalidate any previous owner of this frame.
             auto [oldSegment, oldPage] = frame_owners[frame];
 
@@ -270,11 +308,14 @@ public:
 
         latency += 1;
 
-        int frame = table.getFrameNumber(pageNum, accessType);
+       int frame = table.getFrameNumber(pageNum, accessType);
 
         if (frame == -1) {
             return -1;
         }
+
+        // Update usage timestamp for LRU
+        memory.accessFrame(frame);
 
         int physicalAddress = frame * page_size + offset;
 
@@ -291,54 +332,49 @@ public:
 
 
 
+
 int main() {
+    cout << "M5A1 - FIFO vs LRU Test\n";
 
-    cout << "M5A1 Address Translation Test\n\n";
+    vector<int> requests = {0, 1, 2, 0, 3};
 
-    PhysicalMemory memory(3);
-    SegmentTable segments(memory, 1000);
+    for (int mode = 0; mode < 2; mode++) {
 
-    // Segment 0: 4000 bytes, read/write
-    segments.addSegment(4000, READ_WRITE);
+        PhysicalMemory::ReplacementPolicy policy =
+            mode == 0 ? PhysicalMemory::FIFO
+                      : PhysicalMemory::LRU;
 
-    // Segment 1: 2000 bytes, read-only
-    segments.addSegment(2000, READ_ONLY);
+        cout << "\n========================\n";
+        cout << (mode == 0 ? "Testing FIFO" : "Testing LRU");
+        cout << "\n========================\n";
 
-    int latency = 0;
+        PhysicalMemory memory(3, policy);
+        SegmentTable segments(memory, 1000);
 
-    cout << "\nTest 1: Valid translation\n";
-    segments.translateAddress(0, 2, 50, READ_ONLY, latency);
+        segments.addSegment(4000, READ_WRITE);
 
-    cout << "\nTest 2: Same page (page hit)\n";
-    segments.translateAddress(0, 2, 100, READ_ONLY, latency);
+        int latency = 0;
 
-    cout << "\nTest 3: Invalid segment\n";
-    segments.translateAddress(5, 0, 20, READ_ONLY, latency);
+        for (int page : requests) {
+            cout << "\nRequesting page " << page << "\n";
 
-    cout << "\nTest 4: Invalid offset\n";
-    segments.translateAddress(0, 1, 1500, READ_ONLY, latency);
+            segments.translateAddress(
+                0, page, 0, READ_ONLY, latency
+            );
+        }
 
-    cout << "\nTest 5: Protection violation\n";
-    segments.translateAddress(1, 0, 50, READ_WRITE, latency);
+        cout << "\nPage faults: "
+             << segments.getPageFaults() << "\n";
 
-    cout << "\nTest 6: Fill remaining frames\n";
-    segments.translateAddress(0, 0, 10, READ_ONLY, latency);
-    segments.translateAddress(0, 1, 10, READ_ONLY, latency);
+        cout << "Replacements: "
+             << memory.replacements << "\n";
 
-    cout << "\nTest 7: Trigger FIFO replacement\n";
-    segments.translateAddress(0, 3, 20, READ_ONLY, latency);
+        cout << "Utilization: "
+             << memory.utilization() << "%\n";
 
-    cout << "\nPage faults: "
-         << segments.getPageFaults() << "\n";
-
-    cout << "Replacements: "
-         << memory.replacements << "\n";
-
-    cout << "Memory utilization: "
-         << memory.utilization() << "%\n";
-
-    cout << "Simulated latency: "
-         << latency << "\n";
+        cout << "Simulated latency: "
+             << latency << "\n";
+    }
 
     return 0;
 }
