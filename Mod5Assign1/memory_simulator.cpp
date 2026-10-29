@@ -277,6 +277,59 @@ class SegmentTable {
     public:
 
 
+void processBatch(const string& filename, int& latency) {
+
+    ifstream input(filename);
+
+    if (!input.is_open()) {
+        cout << "Error: Could not open " << filename << "\n";
+        return;
+    }
+
+    int segNum, pageNum, offset, accessChoice;
+    int total = 0;
+    int successful = 0;
+    int failed = 0;
+
+    cout << "\n========== BATCH PROCESSING ==========\n";
+
+    while (input >> segNum >> pageNum >> offset >> accessChoice) {
+
+        total++;
+
+        cout << "\nRequest " << total << "\n";
+
+        if (accessChoice != 1 && accessChoice != 2) {
+            cout << "Invalid access type.\n";
+            failed++;
+            continue;
+        }
+
+        Protection accessType =
+            accessChoice == 1 ? READ_ONLY : READ_WRITE;
+
+        int address = translateAddress(
+            segNum, pageNum, offset, accessType, latency
+        );
+
+        if (address == -1) {
+            failed++;
+            cout << "Result: FAILED\n";
+        } else {
+            successful++;
+            cout << "Result: SUCCESS | Address: "
+                 << address << "\n";
+        }
+    }
+
+    cout << "\n========== BATCH SUMMARY ==========\n";
+    cout << "Total requests: " << total << "\n";
+    cout << "Successful: " << successful << "\n";
+    cout << "Failed: " << failed << "\n";
+
+    input.close();
+}
+
     void logError(const string& message) {
 
         ofstream log("errors.log", ios::app);
@@ -406,9 +459,13 @@ void addSegment(int limit, Protection protection) {
 
 
        
-int translateAddress(int segNum, int pageNum,
-                     int offset, Protection accessType,
-                     int& latency) {
+int translateAddress(int segNum, int pageNum,int offset, Protection accessType,int& latency) {
+    // Simulate a translation latency between 1 and 5 units.
+    static mt19937 latencyGenerator(2026);
+    static uniform_int_distribution<int> latencyDistribution(1, 5);
+
+    int translationLatency = latencyDistribution(latencyGenerator);
+    latency += translationLatency;
 
     // Helper: record and log failed translations.
     auto fail = [&](const string& reason) -> int {
@@ -488,7 +545,7 @@ int translateAddress(int segNum, int pageNum,
         page_faults++;
 
         // Simulated page fault penalty.
-        latency += 100;
+        //latency += 100;
 
         int frame = memory.allocateFrame();
 
@@ -544,7 +601,7 @@ int translateAddress(int segNum, int pageNum,
     memory.accessFrame(frame);
 
     // Normal simulated translation cost.
-    latency += 1;
+        //latency += 1;
 
     // =========================================
     // STEP 7: COMPUTE PHYSICAL ADDRESS
@@ -562,6 +619,8 @@ int translateAddress(int segNum, int pageNum,
     cout << "Physical address: "
          << physicalAddress << "\n";
 
+    cout << "Translation latency: "
+     << translationLatency << " units\n";
     // =========================================
     // STEP 8: RECORD SUCCESSFUL TRANSLATION
     // =========================================
@@ -581,212 +640,223 @@ int translateAddress(int segNum, int pageNum,
         }
 
 
-void runStressTest(int testCount, int validPercent,
-                   int& latency) {
+    
+    double getAverageLatency(int totalLatency) const {
 
-    if (testCount <= 0 || validPercent < 0 ||
-        validPercent > 100 || segments.empty()) {
-        cout << "Invalid stress test configuration.\n";
-        return;
+        if (translationTimeline.empty()) {
+            return 0.0;
+        }
+
+        return static_cast<double>(totalLatency)
+            / translationTimeline.size();
     }
 
-    ofstream results("results.txt");
-    ofstream errors("errors.log", ios::app);
+    void runStressTest(int testCount, int validPercent,
+                    int& latency) {
 
-    if (!results || !errors) {
-        cerr << "Unable to open test output files.\n";
-        return;
-    }
+        if (testCount <= 0 || validPercent < 0 ||
+            validPercent > 100 || segments.empty()) {
+            cout << "Invalid stress test configuration.\n";
+            return;
+        }
 
-    mt19937 rng(42);
+        ofstream results("results.txt");
+        ofstream errors("errors.log", ios::app);
 
-    auto randomInt = [&](int low, int high) {
-        uniform_int_distribution<int> dist(low, high);
-        return dist(rng);
-    };
+        if (!results || !errors) {
+            cerr << "Unable to open test output files.\n";
+            return;
+        }
 
-    int successes = 0;
-    int failures = 0;
-    int validRequests = 0;
-    int invalidRequests = 0;
+        mt19937 rng(42);
 
-    int initialFaults = page_faults;
-    int initialReplacements = memory.replacements;
-    int initialLatency = latency;
+        auto randomInt = [&](int low, int high) {
+            uniform_int_distribution<int> dist(low, high);
+            return dist(rng);
+        };
 
-    results << "M5A1 - Random Address Stress Test\n";
-    results << "================================\n";
-    results << "Total requests: " << testCount << "\n";
-    results << "Target valid-address ratio: "
-            << validPercent << "%\n\n";
+        int successes = 0;
+        int failures = 0;
+        int validRequests = 0;
+        int invalidRequests = 0;
 
-    for (int i = 1; i <= testCount; i++) {
+        int initialFaults = page_faults;
+        int initialReplacements = memory.replacements;
+        int initialLatency = latency;
 
-        // Decide whether this request should be
-        // within the configured logical address bounds.
-        bool validRequest = randomInt(1, 100) <= validPercent;
+        results << "M5A1 - Random Address Stress Test\n";
+        results << "================================\n";
+        results << "Total requests: " << testCount << "\n";
+        results << "Target valid-address ratio: "
+                << validPercent << "%\n\n";
 
-        int segNum;
-        int pageNum;
-        int offset;
+        for (int i = 1; i <= testCount; i++) {
 
-        if (validRequest) {
-            validRequests++;
+            // Decide whether this request should be
+            // within the configured logical address bounds.
+            bool validRequest = randomInt(1, 100) <= validPercent;
 
-            segNum = randomInt(
-                0, static_cast<int>(segments.size()) - 1
+            int segNum;
+            int pageNum;
+            int offset;
+
+            if (validRequest) {
+                validRequests++;
+
+                segNum = randomInt(
+                    0, static_cast<int>(segments.size()) - 1
+                );
+
+                int limit = segments[segNum].limit;
+
+                // Choose a byte within the segment.
+                int logicalByte = randomInt(0, limit - 1);
+
+                pageNum = logicalByte / page_size;
+                offset = logicalByte % page_size;
+
+            } else {
+                invalidRequests++;
+
+                // An out-of-range segment guarantees
+                // an invalid logical address.
+                segNum = static_cast<int>(segments.size())
+                        + randomInt(0, 3);
+
+                pageNum = randomInt(0, 3);
+                offset = randomInt(0, page_size - 1);
+            }
+
+            Protection accessType =
+                randomInt(0, 1) == 0
+                    ? READ_ONLY
+                    : READ_WRITE;
+
+            results << "Test " << i
+                    << ": Segment=" << segNum
+                    << ", Page=" << pageNum
+                    << ", Offset=" << offset
+                    << ", Access="
+                    << (accessType == READ_ONLY
+                        ? "READ" : "WRITE")
+                    << "\n";
+
+            int address = translateAddress(
+                segNum, pageNum, offset, accessType, latency
             );
 
-            int limit = segments[segNum].limit;
+            if (address != -1) {
+                successes++;
 
-            // Choose a byte within the segment.
-            int logicalByte = randomInt(0, limit - 1);
+                results << "Result: SUCCESS"
+                        << " | Physical Address: "
+                        << address << "\n\n";
 
-            pageNum = logicalByte / page_size;
-            offset = logicalByte % page_size;
+            } else {
+                failures++;
 
-        } else {
-            invalidRequests++;
+                results << "Result: FAILED\n\n";
 
-            // An out-of-range segment guarantees
-            // an invalid logical address.
-            segNum = static_cast<int>(segments.size())
-                     + randomInt(0, 3);
-
-            pageNum = randomInt(0, 3);
-            offset = randomInt(0, page_size - 1);
+                errors << "Stress Test " << i
+                    << " | Segment=" << segNum
+                    << " | Page=" << pageNum
+                    << " | Offset=" << offset
+                    << " | Access="
+                    << (accessType == READ_ONLY
+                        ? "READ" : "WRITE")
+                    << " | Translation failed\n";
+            }
         }
 
-        Protection accessType =
-            randomInt(0, 1) == 0
-                ? READ_ONLY
-                : READ_WRITE;
+        int newFaults = page_faults - initialFaults;
+        int newReplacements =
+            memory.replacements - initialReplacements;
+        int latencyUsed = latency - initialLatency;
 
-        results << "Test " << i
-                << ": Segment=" << segNum
-                << ", Page=" << pageNum
-                << ", Offset=" << offset
-                << ", Access="
-                << (accessType == READ_ONLY
-                    ? "READ" : "WRITE")
-                << "\n";
+        double faultRate =
+            100.0 * newFaults / testCount;
 
-        int address = translateAddress(
-            segNum, pageNum, offset, accessType, latency
-        );
+        double successRate =
+            100.0 * successes / testCount;
 
-        if (address != -1) {
-            successes++;
+        double averageLatency =
+            static_cast<double>(latencyUsed) / testCount;
 
-            results << "Result: SUCCESS"
-                    << " | Physical Address: "
-                    << address << "\n\n";
+        results << fixed << setprecision(2);
 
-        } else {
-            failures++;
+        results << "\n========== SUMMARY ==========\n";
+        results << "Total requests: " << testCount << "\n";
+        results << "Valid logical addresses generated: "
+                << validRequests << "\n";
+        results << "Invalid logical addresses generated: "
+                << invalidRequests << "\n";
+        results << "Successful translations: "
+                << successes << "\n";
+        results << "Failed translations: "
+                << failures << "\n";
+        results << "Success rate: " << successRate << "%\n";
+        results << "Page faults: " << newFaults << "\n";
+        results << "Page fault rate: " << faultRate << "%\n";
+        results << "Page replacements: "
+                << newReplacements << "\n";
+        results << "Memory utilization: "
+                << memory.utilization() << "%\n";
+        results << "Average simulated latency: "
+                << averageLatency << "\n";
 
-            results << "Result: FAILED\n\n";
-
-            errors << "Stress Test " << i
-                   << " | Segment=" << segNum
-                   << " | Page=" << pageNum
-                   << " | Offset=" << offset
-                   << " | Access="
-                   << (accessType == READ_ONLY
-                       ? "READ" : "WRITE")
-                   << " | Translation failed\n";
-        }
-    }
-
-    int newFaults = page_faults - initialFaults;
-    int newReplacements =
-        memory.replacements - initialReplacements;
-    int latencyUsed = latency - initialLatency;
-
-    double faultRate =
-        100.0 * newFaults / testCount;
-
-    double successRate =
-        100.0 * successes / testCount;
-
-    double averageLatency =
-        static_cast<double>(latencyUsed) / testCount;
-
-    results << fixed << setprecision(2);
-
-    results << "\n========== SUMMARY ==========\n";
-    results << "Total requests: " << testCount << "\n";
-    results << "Valid logical addresses generated: "
-            << validRequests << "\n";
-    results << "Invalid logical addresses generated: "
-            << invalidRequests << "\n";
-    results << "Successful translations: "
-            << successes << "\n";
-    results << "Failed translations: "
-            << failures << "\n";
-    results << "Success rate: " << successRate << "%\n";
-    results << "Page faults: " << newFaults << "\n";
-    results << "Page fault rate: " << faultRate << "%\n";
-    results << "Page replacements: "
+        cout << fixed << setprecision(2);
+        cout << "\n========== STRESS TEST SUMMARY ==========\n";
+        cout << "Total requests: " << testCount << "\n";
+        cout << "Successful translations: " << successes << "\n";
+        cout << "Failed translations: " << failures << "\n";
+        cout << "Success rate: " << successRate << "%\n";
+        cout << "Page faults: " << newFaults << "\n";
+        cout << "Page fault rate: " << faultRate << "%\n";
+        cout << "Page replacements: "
             << newReplacements << "\n";
-    results << "Memory utilization: "
+        cout << "Memory utilization: "
             << memory.utilization() << "%\n";
-    results << "Average simulated latency: "
+        cout << "Average simulated latency: "
             << averageLatency << "\n";
 
-    cout << fixed << setprecision(2);
-    cout << "\n========== STRESS TEST SUMMARY ==========\n";
-    cout << "Total requests: " << testCount << "\n";
-    cout << "Successful translations: " << successes << "\n";
-    cout << "Failed translations: " << failures << "\n";
-    cout << "Success rate: " << successRate << "%\n";
-    cout << "Page faults: " << newFaults << "\n";
-    cout << "Page fault rate: " << faultRate << "%\n";
-    cout << "Page replacements: "
-         << newReplacements << "\n";
-    cout << "Memory utilization: "
-         << memory.utilization() << "%\n";
-    cout << "Average simulated latency: "
-         << averageLatency << "\n";
-
-    cout << "\nResults saved to results.txt\n";
-    cout << "Failures logged to errors.log\n";
-}
-
-
-bool setPageProtection(int segNum, int pageNum,
-                       Protection protection) {
-
-    if (segNum < 0 ||
-        segNum >= static_cast<int>(segments.size())) {
-        cout << "Invalid segment number.\n";
-        return false;
+        cout << "\nResults saved to results.txt\n";
+        cout << "Failures logged to errors.log\n";
     }
 
-    PageTable& table = page_tables[segNum];
 
-    if (pageNum < 0 || pageNum >= table.num_pages) {
-        cout << "Invalid page number.\n";
-        return false;
+    bool setPageProtection(int segNum, int pageNum,
+                        Protection protection) {
+
+        if (segNum < 0 ||
+            segNum >= static_cast<int>(segments.size())) {
+            cout << "Invalid segment number.\n";
+            return false;
+        }
+
+        PageTable& table = page_tables[segNum];
+
+        if (pageNum < 0 || pageNum >= table.num_pages) {
+            cout << "Invalid page number.\n";
+            return false;
+        }
+
+        // A page cannot grant write permission when
+        // its containing segment is read-only.
+        if (segments[segNum].protection == READ_ONLY &&
+            protection == READ_WRITE) {
+            cout << "Cannot grant write access to a "
+                << "page inside a read-only segment.\n";
+            return false;
+        }
+
+        Page& page = table.getPage(pageNum);
+        page.protection = protection;
+
+        cout << "Protection updated for Segment "
+            << segNum << ", Page " << pageNum << "\n";
+
+        return true;
     }
-
-    // A page cannot grant write permission when
-    // its containing segment is read-only.
-    if (segments[segNum].protection == READ_ONLY &&
-        protection == READ_WRITE) {
-        cout << "Cannot grant write access to a "
-             << "page inside a read-only segment.\n";
-        return false;
-    }
-
-    Page& page = table.getPage(pageNum);
-    page.protection = protection;
-
-    cout << "Protection updated for Segment "
-         << segNum << ", Page " << pageNum << "\n";
-
-    return true;
-}
 
 };
 
@@ -922,18 +992,17 @@ int main() {
     do {
 
         cout << "\n========== MAIN MENU ==========\n";
-        cout << "1. Translate Address\n";
-        cout << "2. Display Page Directories\n";
-        cout << "3. Display Physical Memory Map\n";
-        cout << "4. Display Statistics\n";
-        cout << "5. Run Random Stress Test\n";
-        cout << "6. Configure Page Protection\n";
-        cout << "7. Display Translation Timeline\n";
-        cout << "8. Exit\n";
+cout << "1. Translate Address\n";
+cout << "2. Display Page Directories\n";
+cout << "3. Display Physical Memory Map\n";
+cout << "4. Display Statistics\n";
+cout << "5. Run Random Stress Test\n";
+cout << "6. Configure Page Protection\n";
+cout << "7. Display Translation Timeline\n";
+cout << "8. Process Batch File\n";
+cout << "9. Exit\n";
 
-        choice = getValidatedInput(
-            "Choice: ", 1, 8
-        );
+        choice = getValidatedInput("Choice: ", 1, 9);
 
         switch (choice) {
 
@@ -1024,6 +1093,12 @@ int main() {
 
             cout << "Total simulated latency: "
                  << latency << "\n";
+            
+            cout << fixed << setprecision(2);
+
+            cout << "Average translation latency: "
+                << segments.getAverageLatency(latency)
+                << " units\n";
 
             cout << "================================\n";
 
@@ -1111,15 +1186,22 @@ int main() {
         // =====================================
 
         case 8: {
+    string filename;
 
-            cout << "\nExiting M5A1 Memory Simulator.\n";
+    cout << "Enter batch filename: ";
+    cin >> filename;
 
-            break;
+    segments.processBatch(filename, latency);
+    break;
+}
+
+case 9:
+    cout << "Exiting M5A1 Memory Simulator.\n";
+    break;
+
         }
 
-        }
-
-    } while (choice != 8);
+    } while (choice != 9);
 
     return 0;
 }

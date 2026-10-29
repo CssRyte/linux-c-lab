@@ -1,2 +1,36 @@
 Invalid Address: Page or offset out of bounds | Segment=0 | Page=5 | Offset=20 | Access=READ
 Invalid Address: Page or offset out of bounds | Segment=0 | Page=5 | Offset=20 | Access=READ
+Invalid Address: Page or offset out of bounds | Segment=0 | Page=5 | Offset=20 | Access=READ
+Segmentation Fault: Invalid segment | Segment=5 | Page=0 | Offset=10 | Access=READ
+Segmentation Fault: Invalid segment | Segment=4 | Page=0 | Offset=0 | Access=READ
+Segmentation Fault: Invalid segment | Segment=1 | Page=2 | Offset=304 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=4 | Page=3 | Offset=563 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=1 | Page=0 | Offset=909 | Access=READ
+Segmentation Fault: Invalid segment | Segment=4 | Page=3 | Offset=449 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=2 | Page=3 | Offset=388 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=1 | Page=0 | Offset=15 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=2 | Page=2 | Offset=115 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=4 | Page=2 | Offset=449 | Access=READ
+Segmentation Fault: Invalid segment | Segment=3 | Page=3 | Offset=760 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=2 | Page=2 | Offset=105 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=2 | Page=1 | Offset=632 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=4 | Page=0 | Offset=675 | Access=READ
+Segmentation Fault: Invalid segment | Segment=3 | Page=2 | Offset=529 | Access=READ
+Segmentation Fault: Invalid segment | Segment=3 | Page=3 | Offset=882 | Access=WRITE
+Segmentation Fault: Invalid segment | Segment=4 | Page=1 | Offset=779 | Access=WRITE
+Stress Test 7 | Segment=4 | Page=0 | Offset=0 | Access=READ | Translation failed
+Stress Test 8 | Segment=1 | Page=2 | Offset=304 | Access=WRITE | Translation failed
+Stress Test 17 | Segment=4 | Page=3 | Offset=563 | Access=WRITE | Translation failed
+Stress Test 21 | Segment=1 | Page=0 | Offset=909 | Access=READ | Translation failed
+Stress Test 25 | Segment=4 | Page=3 | Offset=449 | Access=WRITE | Translation failed
+Stress Test 29 | Segment=2 | Page=3 | Offset=388 | Access=WRITE | Translation failed
+Stress Test 33 | Segment=1 | Page=0 | Offset=15 | Access=WRITE | Translation failed
+Stress Test 38 | Segment=2 | Page=2 | Offset=115 | Access=WRITE | Translation failed
+Stress Test 39 | Segment=4 | Page=2 | Offset=449 | Access=READ | Translation failed
+Stress Test 44 | Segment=3 | Page=3 | Offset=760 | Access=WRITE | Translation failed
+Stress Test 55 | Segment=2 | Page=2 | Offset=105 | Access=WRITE | Translation failed
+Stress Test 78 | Segment=2 | Page=1 | Offset=632 | Access=WRITE | Translation failed
+Stress Test 87 | Segment=4 | Page=0 | Offset=675 | Access=READ | Translation failed
+Stress Test 91 | Segment=3 | Page=2 | Offset=529 | Access=READ | Translation failed
+Stress Test 93 | Segment=3 | Page=3 | Offset=882 | Access=WRITE | Translation failed
+Stress Test 96 | Segment=4 | Page=1 | Offset=779 | Access=WRITE | Translation failed
