@@ -602,6 +602,32 @@ void runStressTest(int testCount, int validPercent,
 
 
 
+int getValidatedInput(const string& prompt, int minimum, int maximum) {
+
+    int value;
+
+    while (true) {
+        cout << prompt;
+
+        if (!(cin >> value)) {
+            cout << "Error: Please enter a valid integer.\n";
+
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            continue;
+        }
+
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        if (value < minimum || value > maximum) {
+            cout << "Error: Enter a value between "
+                 << minimum << " and " << maximum << ".\n";
+            continue;
+        }
+
+        return value;
+    }
+}
 
 
 
@@ -611,34 +637,26 @@ int main() {
     cout << " M5A1 Advanced Memory Simulator\n";
     cout << "=====================================\n";
 
-    int numFrames, pageSize, numSegments;
-    int policyChoice;
+    // Validate each configuration immediately.
+    int numFrames = getValidatedInput(
+        "Enter number of physical frames: ", 1, 10000
+    );
 
-    cout << "Enter number of physical frames: ";
-    cin >> numFrames;
+    int pageSize = getValidatedInput(
+        "Enter page size (bytes): ", 1, 1000000
+    );
 
-    cout << "Enter page size (bytes): ";
-    cin >> pageSize;
-
-    cout << "Enter number of segments: ";
-    cin >> numSegments;
-
-    if (!cin || numFrames <= 0 || pageSize <= 0 ||
-        numSegments <= 0) {
-        cerr << "Invalid memory configuration.\n";
-        return 1;
-    }
+    int numSegments = getValidatedInput(
+        "Enter number of segments: ", 1, 100
+    );
 
     cout << "\nChoose replacement algorithm:\n";
     cout << "1. FIFO\n";
     cout << "2. LRU\n";
-    cout << "Choice: ";
-    cin >> policyChoice;
 
-    if (!cin || (policyChoice != 1 && policyChoice != 2)) {
-        cerr << "Invalid replacement policy.\n";
-        return 1;
-    }
+    int policyChoice = getValidatedInput(
+        "Choice: ", 1, 2
+    );
 
     PhysicalMemory::ReplacementPolicy policy =
         (policyChoice == 1)
@@ -651,34 +669,34 @@ int main() {
     // Configure each segment.
     for (int i = 0; i < numSegments; i++) {
 
-        int segmentSize, protectionChoice;
+        cout << "\nSegment " << i
+             << " configuration\n";
 
-        cout << "\nSegment " << i << " configuration\n";
+        int segmentSize = getValidatedInput(
+            "Enter segment size (bytes): ",
+            1, 10000000
+        );
 
-        cout << "Enter segment size (bytes): ";
-        cin >> segmentSize;
+        cout << "1. Read Only\n";
+        cout << "2. Read/Write\n";
 
-        cout << "Protection (1=Read Only, 2=Read/Write): ";
-        cin >> protectionChoice;
+        int protectionChoice = getValidatedInput(
+            "Protection: ", 1, 2
+        );
 
-        if (!cin || segmentSize <= 0 ||
-            (protectionChoice != 1 && protectionChoice != 2)) {
-            cerr << "Invalid segment configuration.\n";
-            return 1;
-        }
-
-        Protection prot =
+        Protection protection =
             (protectionChoice == 1)
             ? READ_ONLY
             : READ_WRITE;
 
-        segments.addSegment(segmentSize, prot);
+        segments.addSegment(segmentSize, protection);
     }
 
     int latency = 0;
-    int choice = 0;
+    int choice;
 
     do {
+        cout << "\n========== MAIN MENU ==========\n";
         cout << "1. Translate Address\n";
         cout << "2. Display Page Directories\n";
         cout << "3. Display Physical Memory Map\n";
@@ -686,34 +704,28 @@ int main() {
         cout << "5. Run Random Stress Test\n";
         cout << "6. Exit\n";
 
-        if (!(cin >> choice)) {
-            cerr << "Invalid menu input.\n";
-            return 1;
-        }
+        choice = getValidatedInput(
+            "Choice: ", 1, 6
+        );
 
         switch (choice) {
 
         case 1: {
-            int segNum, pageNum, offset, accessChoice;
+            int segNum = getValidatedInput(
+                "Segment number: ", -1000000, 1000000
+            );
 
-            cout << "Segment number: ";
-            cin >> segNum;
+            int pageNum = getValidatedInput(
+                "Page number: ", -1000000, 1000000
+            );
 
-            cout << "Page number: ";
-            cin >> pageNum;
+            int offset = getValidatedInput(
+                "Offset: ", -1000000, 1000000
+            );
 
-            cout << "Offset: ";
-            cin >> offset;
-
-            cout << "Access (1=Read, 2=Write): ";
-            cin >> accessChoice;
-
-            if (!cin ||
-                (accessChoice != 1 && accessChoice != 2)) {
-                cout << "Invalid access type.\n";
-                if (!cin) return 1;
-                break;
-            }
+            int accessChoice = getValidatedInput(
+                "Access (1=Read, 2=Write): ", 1, 2
+            );
 
             Protection accessType =
                 (accessChoice == 1)
@@ -721,7 +733,8 @@ int main() {
                 : READ_WRITE;
 
             int address = segments.translateAddress(
-                segNum, pageNum, offset, accessType, latency
+                segNum, pageNum, offset,
+                accessType, latency
             );
 
             if (address == -1) {
@@ -744,6 +757,7 @@ int main() {
 
         case 4:
             cout << "\n===== STATISTICS =====\n";
+
             cout << "Page faults: "
                  << segments.getPageFaults() << "\n";
 
@@ -758,26 +772,21 @@ int main() {
             break;
 
         case 5: {
-    int validPercent;
+            int validPercent = getValidatedInput(
+                "Valid address percentage (0-100): ",
+                0, 100
+            );
 
-    cout << "Enter valid address percentage (0-100): ";
-    cin >> validPercent;
+            segments.runStressTest(
+                100, validPercent, latency
+            );
 
-    if (!cin || validPercent < 0 || validPercent > 100) {
-        cout << "Invalid percentage.\n";
-        if (!cin) return 1;
-        break;
-    }
+            break;
+        }
 
-    segments.runStressTest(100, validPercent, latency);
-    break;
-}
-
-case 6:
-    cout << "Exiting simulator.\n";
-    break;
-        default:
-            cout << "Invalid menu option.\n";
+        case 6:
+            cout << "Exiting simulator.\n";
+            break;
         }
 
     } while (choice != 6);
