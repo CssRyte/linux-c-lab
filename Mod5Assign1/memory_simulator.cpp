@@ -76,11 +76,8 @@ public:
 
         Page& page = getPage(pageNum);
 
-        if (!page.present) {
-            cout << "Page Fault: Page " << pageNum
-                 << " is not in memory.\n";
-            return -1;
-        }
+        if (accessType == READ_WRITE &&
+            page.protection == READ_ONLY)
 
         if (accessType == READ_WRITE &&
             page.protection == READ_ONLY) {
@@ -327,16 +324,35 @@ void printPhysicalMemoryMap() const {
             frame_owners(mem.num_frames, {-1, -1}),
             page_size(size) {}
 
-        void addSegment(int limit, Protection protection) {
-            int numPages = (limit + page_size - 1) / page_size;
+        
+void addSegment(int limit, Protection protection) {
 
-            segments.push_back({0, limit, protection});
-            page_tables.emplace_back(numPages, page_size);
+    if (limit <= 0 || page_size <= 0) {
+        cout << "Invalid segment configuration.\n";
+        return;
+    }
 
-            cout << "Created segment "
-                << segments.size() - 1
-                << " with " << numPages << " pages.\n";
-        }
+    // Assign each segment a non-overlapping logical base.
+    int base = 0;
+
+    if (!segments.empty()) {
+        const Segment& previous = segments.back();
+        base = previous.base_address + previous.limit;
+    }
+
+    int numPages = 1 + (limit - 1) / page_size;
+
+    segments.push_back({base, limit, protection});
+    page_tables.emplace_back(numPages, page_size);
+
+    cout << "Created segment "
+         << segments.size() - 1
+         << " | Base: " << base
+         << " | Size: " << limit
+         << " bytes | Pages: " << numPages
+         << "\n";
+}
+
 
         int translateAddress(int segNum, int pageNum,
                             int offset, Protection accessType,
@@ -398,7 +414,7 @@ void printPhysicalMemoryMap() const {
                     evicted.frame_number = -1;
                 }
 
-                table.setFrame(pageNum, frame, segment.protection);
+                table.setFrame(pageNum, frame, page.protection);
                 frame_owners[frame] = {segNum, pageNum};
             }
 
@@ -598,7 +614,42 @@ void runStressTest(int testCount, int validPercent,
     cout << "Failures logged to errors.log\n";
 }
 
- };
+
+bool setPageProtection(int segNum, int pageNum,
+                       Protection protection) {
+
+    if (segNum < 0 ||
+        segNum >= static_cast<int>(segments.size())) {
+        cout << "Invalid segment number.\n";
+        return false;
+    }
+
+    PageTable& table = page_tables[segNum];
+
+    if (pageNum < 0 || pageNum >= table.num_pages) {
+        cout << "Invalid page number.\n";
+        return false;
+    }
+
+    // A page cannot grant write permission when
+    // its containing segment is read-only.
+    if (segments[segNum].protection == READ_ONLY &&
+        protection == READ_WRITE) {
+        cout << "Cannot grant write access to a "
+             << "page inside a read-only segment.\n";
+        return false;
+    }
+
+    Page& page = table.getPage(pageNum);
+    page.protection = protection;
+
+    cout << "Protection updated for Segment "
+         << segNum << ", Page " << pageNum << "\n";
+
+    return true;
+}
+
+};
 
 
 
@@ -631,13 +682,18 @@ int getValidatedInput(const string& prompt, int minimum, int maximum) {
 
 
 
+
+
 int main() {
 
-    cout << "=====================================\n";
-    cout << " M5A1 Advanced Memory Simulator\n";
-    cout << "=====================================\n";
+    cout << "=========================================\n";
+    cout << " M5A1 Advanced Segmented Memory Simulator\n";
+    cout << "=========================================\n";
 
-    // Validate each configuration immediately.
+    // =========================================
+    // STEP 1: MEMORY CONFIGURATION
+    // =========================================
+
     int numFrames = getValidatedInput(
         "Enter number of physical frames: ", 1, 10000
     );
@@ -650,6 +706,10 @@ int main() {
         "Enter number of segments: ", 1, 100
     );
 
+    // =========================================
+    // STEP 2: REPLACEMENT ALGORITHM
+    // =========================================
+
     cout << "\nChoose replacement algorithm:\n";
     cout << "1. FIFO\n";
     cout << "2. LRU\n";
@@ -660,23 +720,27 @@ int main() {
 
     PhysicalMemory::ReplacementPolicy policy =
         (policyChoice == 1)
-        ? PhysicalMemory::FIFO
-        : PhysicalMemory::LRU;
+            ? PhysicalMemory::FIFO
+            : PhysicalMemory::LRU;
 
     PhysicalMemory memory(numFrames, policy);
     SegmentTable segments(memory, pageSize);
 
-    // Configure each segment.
+    // =========================================
+    // STEP 3: SEGMENT CONFIGURATION
+    // =========================================
+
     for (int i = 0; i < numSegments; i++) {
 
-        cout << "\nSegment " << i
-             << " configuration\n";
+        cout << "\n========== SEGMENT " << i
+             << " CONFIGURATION ==========\n";
 
         int segmentSize = getValidatedInput(
             "Enter segment size (bytes): ",
             1, 10000000
         );
 
+        cout << "\nChoose segment protection:\n";
         cout << "1. Read Only\n";
         cout << "2. Read/Write\n";
 
@@ -686,31 +750,44 @@ int main() {
 
         Protection protection =
             (protectionChoice == 1)
-            ? READ_ONLY
-            : READ_WRITE;
+                ? READ_ONLY
+                : READ_WRITE;
 
         segments.addSegment(segmentSize, protection);
     }
 
+    // =========================================
+    // STEP 4: MAIN MENU
+    // =========================================
+
     int latency = 0;
-    int choice;
+    int choice = 0;
 
     do {
+
         cout << "\n========== MAIN MENU ==========\n";
         cout << "1. Translate Address\n";
         cout << "2. Display Page Directories\n";
         cout << "3. Display Physical Memory Map\n";
         cout << "4. Display Statistics\n";
         cout << "5. Run Random Stress Test\n";
-        cout << "6. Exit\n";
+        cout << "6. Configure Page Protection\n";
+        cout << "7. Exit\n";
 
         choice = getValidatedInput(
-            "Choice: ", 1, 6
+            "Choice: ", 1, 7
         );
 
         switch (choice) {
 
+        // =====================================
+        // OPTION 1: ADDRESS TRANSLATION
+        // =====================================
+
         case 1: {
+
+            cout << "\n===== ADDRESS TRANSLATION =====\n";
+
             int segNum = getValidatedInput(
                 "Segment number: ", -1000000, 1000000
             );
@@ -723,73 +800,158 @@ int main() {
                 "Offset: ", -1000000, 1000000
             );
 
+            cout << "\nAccess type:\n";
+            cout << "1. Read\n";
+            cout << "2. Write\n";
+
             int accessChoice = getValidatedInput(
-                "Access (1=Read, 2=Write): ", 1, 2
+                "Access: ", 1, 2
             );
 
             Protection accessType =
                 (accessChoice == 1)
-                ? READ_ONLY
-                : READ_WRITE;
+                    ? READ_ONLY
+                    : READ_WRITE;
 
-            int address = segments.translateAddress(
-                segNum, pageNum, offset,
-                accessType, latency
-            );
+            int physicalAddress =
+                segments.translateAddress(
+                    segNum,
+                    pageNum,
+                    offset,
+                    accessType,
+                    latency
+                );
 
-            if (address == -1) {
+            if (physicalAddress == -1) {
                 cout << "Translation failed.\n";
             } else {
                 cout << "Translation successful: "
-                     << address << "\n";
+                     << physicalAddress << "\n";
             }
 
             break;
         }
 
+        // =====================================
+        // OPTION 2: PAGE DIRECTORIES
+        // =====================================
+
         case 2:
+
             segments.printPageDirectories();
             break;
 
+        // =====================================
+        // OPTION 3: PHYSICAL MEMORY MAP
+        // =====================================
+
         case 3:
+
             segments.printPhysicalMemoryMap();
             break;
 
+        // =====================================
+        // OPTION 4: STATISTICS
+        // =====================================
+
         case 4:
-            cout << "\n===== STATISTICS =====\n";
+
+            cout << "\n========== STATISTICS ==========\n";
 
             cout << "Page faults: "
                  << segments.getPageFaults() << "\n";
 
-            cout << "Replacements: "
+            cout << "Page replacements: "
                  << memory.replacements << "\n";
 
             cout << "Memory utilization: "
                  << memory.utilization() << "%\n";
 
-            cout << "Simulated latency: "
+            cout << "Total simulated latency: "
                  << latency << "\n";
+
+            cout << "================================\n";
+
             break;
 
+        // =====================================
+        // OPTION 5: AUTOMATED STRESS TEST
+        // =====================================
+
         case 5: {
+
+            cout << "\n===== RANDOM STRESS TEST =====\n";
+
             int validPercent = getValidatedInput(
                 "Valid address percentage (0-100): ",
                 0, 100
             );
 
             segments.runStressTest(
-                100, validPercent, latency
+                100,
+                validPercent,
+                latency
             );
 
             break;
         }
 
-        case 6:
-            cout << "Exiting simulator.\n";
+        // =====================================
+        // OPTION 6: PAGE PROTECTION
+        // =====================================
+
+        case 6: {
+
+            cout << "\n===== CONFIGURE PAGE PROTECTION =====\n";
+
+            int segNum = getValidatedInput(
+                "Segment number: ", 0, numSegments - 1
+            );
+
+            int pageNum = getValidatedInput(
+                "Page number: ", 0, 1000000
+            );
+
+            cout << "\nChoose page protection:\n";
+            cout << "1. Read Only\n";
+            cout << "2. Read/Write\n";
+
+            int protectionChoice = getValidatedInput(
+                "Protection: ", 1, 2
+            );
+
+            Protection protection =
+                (protectionChoice == 1)
+                    ? READ_ONLY
+                    : READ_WRITE;
+
+            bool success = segments.setPageProtection(
+                segNum,
+                pageNum,
+                protection
+            );
+
+            if (success) {
+                cout << "Page protection configured "
+                     << "successfully.\n";
+            } else {
+                cout << "Page protection update failed.\n";
+            }
+
             break;
         }
 
-    } while (choice != 6);
+        // =====================================
+        // OPTION 7: EXIT
+        // =====================================
+
+        case 7:
+
+            cout << "\nExiting M5A1 Memory Simulator.\n";
+            break;
+        }
+
+    } while (choice != 7);
 
     return 0;
 }
