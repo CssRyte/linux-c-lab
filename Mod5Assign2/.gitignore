@@ -1,0 +1,9 @@
+# Compiled programs
+memory_simulator
+*.o
+*.out
+
+# Temporary files
+.vscode/
+*.swp
+*~

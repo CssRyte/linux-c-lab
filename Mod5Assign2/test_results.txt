@@ -1,0 +1,213 @@
+Memory Simulator Initialized!
+Segments: 1
+Directory tables: 1
+TLB capacity: 4
+Allocated frame: 0
+Allocated frame: 1
+Memory utilization: 25%
+Utilization after freeing frame: 12.5%
+
+===== TLB LRU TEST =====
+TLB contents (MRU -> LRU):
+Page 3 -> Frame 30
+Page 2 -> Frame 20
+Page 1 -> Frame 10
+TLB HIT: Page 1 -> Frame 10
+TLB EVICTION: Page 2
+TLB contents (MRU -> LRU):
+Page 4 -> Frame 40
+Page 1 -> Frame 10
+Page 3 -> Frame 30
+TLB MISS: Page 2
+TLB HIT: Page 4 -> Frame 40
+
+===== TWO-LEVEL PAGING TEST =====
+TLB MISS: Page 1
+Virtual Address: 300
+Directory Index: 0
+Page Index: 1
+Offset: 44
+Physical Address: 1324
+
+===== REPEATED ADDRESS TEST =====
+TLB HIT: Page 1 -> Frame 5
+Physical Address (TLB): 1324
+
+===== PAGE FAULT TEST =====
+TLB MISS: Page 7
+PAGE FAULT: Directory entry missing
+
+===== TLB PERFORMANCE METRICS =====
+TLB Hits: 1
+TLB Misses: 2
+Total Lookups: 3
+TLB Hit Rate: 33.3333%
+
+===== SEGMENT PROTECTION TEST =====
+Valid read: ALLOWED
+Write attempt: PROTECTION FAULT: Write denied
+DENIED
+Out-of-bounds read: SEGMENT FAULT: Address outside segment bounds
+DENIED
+
+===== SEGMENTED ADDRESS TRANSLATION TEST =====
+
+Test 1: Valid read
+Segment access validated
+TLB MISS: Page 1
+Virtual Address: 300
+Directory Index: 0
+Page Index: 1
+Offset: 44
+Physical Address: 1324
+
+Test 2: Repeated valid read
+Segment access validated
+TLB HIT: Page 1 -> Frame 5
+Physical Address (TLB): 1324
+
+Test 3: Unauthorized write
+PROTECTION FAULT: Write denied
+
+Test 4: Out-of-bounds read
+SEGMENT FAULT: Address outside segment bounds
+
+===== TLB PERFORMANCE METRICS =====
+TLB Hits: 1
+TLB Misses: 1
+Total Lookups: 2
+TLB Hit Rate: 50%
+
+===== LRU PAGE REPLACEMENT TEST =====
+Allocated frames: 0, 1, 2
+Next free frame: -1
+PAGE REPLACEMENT: Evicted frame 1 using LRU
+Frame selected for replacement: 1
+Memory utilization: 100%
+
+===== DYNAMIC MEMORY ALLOCATION TEST =====
+Block 1 allocated frames: 0 1 2 
+Memory utilization: 50%
+Block 2 allocated frames: 3 4 
+Memory utilization: 83.3333%
+Utilization after freeing Block 1: 33.3333%
+ALLOCATION FAILED: Not enough free frames
+Block 3 allocation successful: No
+Final memory utilization: 33.3333%
+
+===== TLB INVALIDATION TEST =====
+Before invalidation:
+TLB contents (MRU -> LRU):
+Page 2 -> Frame 20
+Page 1 -> Frame 10
+TLB INVALIDATION: Page 1
+After invalidation:
+TLB contents (MRU -> LRU):
+Page 2 -> Frame 20
+TLB MISS: Page 1
+TLB HIT: Page 2 -> Frame 20
+
+===== TLB PERFORMANCE METRICS =====
+TLB Hits: 1
+TLB Misses: 1
+Total Lookups: 2
+TLB Hit Rate: 50%
+
+===== PAGE REPLACEMENT INTEGRATION TEST =====
+Before replacement:
+TLB contents (MRU -> LRU):
+Page 1 -> Frame 1
+Page 0 -> Frame 0
+PAGE REPLACEMENT: Evicted frame 0 using LRU
+TLB INVALIDATION: Page 0
+PAGE REPLACEMENT COMPLETE: Page 0 -> Page 2 in frame 0
+Replacement successful: Yes
+After replacement:
+TLB contents (MRU -> LRU):
+Page 1 -> Frame 1
+Old page present: 0
+New page present: 1
+
+Accessing new page:
+TLB MISS: Page 2
+Virtual Address: 512
+Directory Index: 0
+Page Index: 2
+Offset: 0
+Physical Address: 0
+
+Accessing evicted page:
+TLB MISS: Page 0
+PAGE FAULT: Page not present
+
+===== MEMORY METRICS TEST =====
+TLB MISS: Page 1
+PAGE FAULT: Page not present
+PAGE REPLACEMENT: Evicted frame 0 using LRU
+TLB INVALIDATION: Page 0
+PAGE REPLACEMENT COMPLETE: Page 0 -> Page 1 in frame 0
+TLB MISS: Page 0
+PAGE FAULT: Page not present
+
+===== MEMORY MANAGEMENT METRICS =====
+Page Faults: 2
+Page Replacements: 1
+
+===== CROSS-DIRECTORY PAGE REPLACEMENT TEST =====
+
+Before replacement:
+TLB contents (MRU -> LRU):
+Page 4 -> Frame 1
+Page 0 -> Frame 0
+PAGE REPLACEMENT: Evicted frame 0 using LRU
+TLB INVALIDATION: Page 0
+PAGE REPLACEMENT COMPLETE: Page 0 -> Page 5 in frame 0
+Replacement successful: Yes
+
+Accessing new page 5:
+TLB MISS: Page 5
+Virtual Address: 1280
+Directory Index: 1
+Page Index: 1
+Offset: 0
+Physical Address: 0
+
+Accessing evicted page 0:
+TLB MISS: Page 0
+PAGE FAULT: Page not present
+
+===== MEMORY MANAGEMENT METRICS =====
+Page Faults: 1
+Page Replacements: 1
+
+===== AUTOMATIC PAGE OWNERSHIP TEST =====
+LRU victim frame: 1
+AUTO REPLACEMENT: Frame 1 belongs to page 1
+PAGE REPLACEMENT: Evicted frame 1 using LRU
+TLB INVALIDATION: Page 1
+PAGE REPLACEMENT COMPLETE: Page 1 -> Page 2 in frame 1
+Automatic replacement successful: Yes
+
+Accessing new page 2:
+TLB MISS: Page 2
+Virtual Address: 512
+Directory Index: 0
+Page Index: 2
+Offset: 0
+Physical Address: 256
+
+Accessing evicted page 1:
+TLB MISS: Page 1
+PAGE FAULT: Page not present
+
+===== MEMORY MANAGEMENT METRICS =====
+Page Faults: 1
+Page Replacements: 1
+
+===== FAILED REPLACEMENT SAFETY TEST =====
+LRU before failed replacement: 0
+REPLACEMENT FAILED: LRU victim mismatch
+Replacement successful: No
+LRU after failed replacement: 0
+Page 1 still present: 1
+Page 2 still absent: 1
